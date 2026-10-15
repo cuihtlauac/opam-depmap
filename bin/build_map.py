@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+"""Inline depgraph/data.json into a self-contained squarified_treemap.html.
+
+Model:
+  * Rectangle  <-> a block of binary (own compiled-artifact bytes). This covers
+    EVERY compiled library -- external deps AND Dream's own libraries that emit
+    code. So the rectangulation is the complete binary footprint.
+  * Dot        <-> a Dream findlib library (an authored library / entry point).
+  * A Dream library that emits code appears as BOTH: a dot (identity) and a
+    rectangle (its binary), joined by a dotted "produces" link.
+
+Dependency edges are anchored at the library's representative glyph: Dream libs
+at their dot, externals at their rectangle. So edges are dot->dot (Dream
+internal), dot->rect (pulls in a block), rect->rect (external->external); there
+are no rectangle->dot dependency edges. All layout runs in the browser.
+"""
+import json, os
+from pathlib import Path
+
+DATA = Path(os.environ.get("DEPMAP_DATA", "data.json")).resolve()
+OUT = Path(os.environ.get("DEPMAP_HTML", "squarified_treemap.html")).resolve()
+data = json.loads(DATA.read_text())
+PROJECT = data.get("project") or "project"
+
+HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dream dependency map</title>
+<style>
+  :root { font-family: ui-sans-serif, system-ui, sans-serif; }
+  html, body { height: 100%; }
+  body { margin: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+         background: var(--bg); color: var(--fg);
+         --bg:#0f1116; --panel:#0b0d12; --fg:#d7dae0; --muted:#8b93a1; --faint:#6b7280;
+         --border:#242832; --hair:#39404e; --btnbg:#1b1f29; --btnhover:#262c38;
+         --btnactive:#3a4252; --btnfg:#c0c7d4; --btnactivefg:#fff; --btnactiveborder:#6b7686;
+         --tipbg:#1b1f29; --dash:#30374a; --celltext:#f6f7f9;
+         --dotring:#0b0d12; --dotroot:#ffd166; --dotown:#cdb86a; --dotext:#9ab6d6;
+         --gold:#ffd166; --edgefaint:#2b3140; --edgefaint2:#303848; --edgedep:#ffdf6b; --edgecon:#7a5cf0; }
+  body.light {
+         --bg:#eef1f5; --panel:#ffffff; --fg:#1b1f27; --muted:#56606e; --faint:#8793a2;
+         --border:#d2d8e0; --hair:#c2c9d4; --btnbg:#e7ebf1; --btnhover:#dbe1ea;
+         --btnactive:#c9d3e2; --btnfg:#2b323d; --btnactivefg:#0a0d12; --btnactiveborder:#8ea0b8;
+         --tipbg:#ffffff; --dash:#b6bfcc;
+         --dotring:#ffffff; --dotroot:#b98700; --dotown:#8a701b; --dotext:#35679c;
+         --gold:#b07f00; --edgefaint:#c4ccd8; --edgefaint2:#aeb8c6; --edgedep:#ffdf6b; --edgecon:#7a5cf0; }
+  header, #legend, footer { flex: 0 0 auto; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .sub { font-size: 12px; color: var(--muted); max-width: 1010px; }
+  .stats { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .stats b { color: var(--fg); font-weight: 600; }
+  #legend { padding: 4px 16px 6px; font-size: 11px; color: var(--muted);
+            display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .ctrllabel { color: var(--faint); margin-right: 3px; }
+  .schemebtn { font: inherit; font-size: 11px; color: var(--btnfg); background: var(--btnbg);
+               border: 1px solid var(--hair); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .schemebtn:hover { background: var(--btnhover); }
+  .schemebtn.active { background: var(--btnactive); color: var(--btnactivefg); border-color: var(--btnactiveborder); }
+  .gbar { display: inline-block; width: 140px; height: 11px; border-radius: 2px;
+          border: 1px solid var(--hair); vertical-align: -1px; margin: 0 5px; }
+  #wrap { position: relative; margin: 6px 16px; border: 1px solid var(--border);
+          border-radius: 6px; overflow: hidden; background: #0b0d12;
+          flex: 1 1 auto; min-height: 0; }
+  #edges { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+  #dotzone { position: absolute; left: 0; right: 0; top: 0; z-index: 1; pointer-events: none;
+             border-bottom: 1px dashed var(--dash); background: var(--panel); }
+  .cell { position: absolute; box-sizing: border-box; border: 1px solid #0b0d12;
+          overflow: hidden; cursor: pointer; z-index: 2;
+          transition: left .45s cubic-bezier(.4,0,.2,1), top .45s cubic-bezier(.4,0,.2,1),
+                      width .45s cubic-bezier(.4,0,.2,1), height .45s cubic-bezier(.4,0,.2,1),
+                      opacity .1s, outline .1s; }
+  #wrap.no-anim .cell, #wrap.no-anim .dot, #wrap.no-anim .dlabel { transition: opacity .1s, outline .1s, transform .08s; }
+  .cell.own .lab { text-decoration: underline; text-underline-offset: 2px; }
+  .cell .lab { position: absolute; left: 3px; right: 2px; top: 1px; font-size: 10px;
+               line-height: 13px; white-space: nowrap; pointer-events: none; color: var(--celltext);
+               text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 2px rgba(0,0,0,.95); }
+  .dot { position: absolute; border-radius: 50%; box-sizing: border-box;
+         border: 1.5px solid var(--dotring); cursor: pointer; z-index: 5;
+         transition: left .45s cubic-bezier(.4,0,.2,1), top .45s cubic-bezier(.4,0,.2,1),
+                     opacity .1s, transform .08s; }
+  .dot.root { background: var(--dotroot); } .dot.own { background: var(--dotown); } .dot.ext { background: var(--dotext); }
+  .dot:hover { transform: scale(1.15); }
+  .dlabel { position: absolute; font-size: 10px; color: var(--fg); white-space: nowrap;
+            pointer-events: none; z-index: 4; transform: translate(-50%, -100%);
+            text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel), 0 0 5px var(--panel);
+            transition: left .45s cubic-bezier(.4,0,.2,1), top .45s cubic-bezier(.4,0,.2,1); }
+  .dim { opacity: .4; }
+  .hl  { z-index: 6 !important; }
+  .dhl { outline: 2px solid var(--fg); outline-offset: 1px; }
+  #tip { position: fixed; pointer-events: none; z-index: 50; background: var(--tipbg); color: var(--fg);
+         border: 1px solid var(--hair); border-radius: 6px; padding: 8px 10px; font-size: 12px;
+         max-width: 310px; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  #tip b { color: var(--fg); } #tip .k { color: var(--muted); }
+  #tip .dep { color: var(--edgedep); } #tip .con { color: var(--edgecon); } #tip .own { color: var(--gold); }
+  footer { padding: 6px 16px 18px; font-size: 11px; color: var(--faint); max-width: 1010px; }
+  code { color: var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Dream &mdash; binary blocks &amp; the libraries that produce / pull them in</h1>
+  <div class="sub">The rectangulation is the <b>complete binary footprint</b>: one rectangle per
+  compiled library, area &prop; own bytes, coloured by depth. Dream's findlib libraries are
+  <b>dots above</b>; a Dream lib that emits code also owns a rectangle (its name <u>underlined</u>),
+  joined by a dotted produces link. <b>Hover</b> to trace a library's binary and everything it pulls
+  in.</div>
+  <div class="stats" id="statline"></div>
+</header>
+<div id="legend"></div>
+<div id="wrap"><svg id="edges"></svg><div id="dotzone"></div></div>
+<div id="tip"></div>
+<footer id="method"></footer>
+<script>
+const DATA = __DATA__;
+const SELF = new Map(), KIND = new Map();
+for (const n of DATA.nodes) { SELF.set(n.id, n.self); KIND.set(n.id, n.kind); }
+const ids = DATA.nodes.map(n => n.id);
+const isDot = new Map(ids.map(i => [i, KIND.get(i) === "own"]));
+const EXT = ids.filter(i => !isDot.get(i));
+const DREAM = ids.filter(i => isDot.get(i));
+const DREAM_CODE = DREAM.filter(i => SELF.get(i) > 0);     // dot + rectangle
+const RECTS = [...EXT, ...DREAM_CODE];                      // every binary block
+const hasRect = new Set(RECTS);
+const succ = new Map(ids.map(i => [i, []]));
+const pred = new Map(ids.map(i => [i, []]));
+for (const [a, b] of DATA.edges) { succ.get(a).push(b); pred.get(b).push(a); }
+
+// ---- depth = longest path from an entry (source) down to each node ---------
+// metricBase(entries)=0, foundational leaves reached via long chains = max.
+// level inverts it so entries land at the hot/top end of the scale.
+const metricBase = new Map();
+(function () { function fl(n) { if (metricBase.has(n)) return metricBase.get(n); metricBase.set(n, 0); const ps = pred.get(n) || []; const v = ps.length ? Math.max(...ps.map(fl)) + 1 : 0; metricBase.set(n, v); return v; } ids.forEach(fl); })();
+const GLAB = ["surface", "foundational"], METRIC_SHORT = "depth";   // surface (hot) <-> foundational (cold)
+const maxFL = Math.max(1, ...RECTS.map(i => metricBase.get(i)));
+const level = new Map(ids.map(id => [id, maxFL - (metricBase.get(id) || 0)]));   // HIGH = top & hot
+const maxLevel = Math.max(1, ...RECTS.map(i => level.get(i)));
+// fan-in ordering: few consumers -> high (top), so the big low-fan-in "bizarre"
+// blocks cluster near the dots -- a space-filling echo of the size-vs-consumers scatter.
+const maxCons = Math.max(0, ...RECTS.map(i => (pred.get(i) || []).length));
+const finOrd = new Map(RECTS.map(i => [i, maxCons - (pred.get(i) || []).length]));
+const finMax = Math.max(1, ...RECTS.map(i => finOrd.get(i)));
+let ORD = level, ORDMAX = maxLevel;   // active layout ordering (depth, or fan-in)
+
+// ---- Dream-internal layering for the dot zone ------------------------------
+const dsucc = new Map(DREAM.map(d => [d, (succ.get(d) || []).filter(x => isDot.get(x))]));
+const dlayer = new Map();
+(function () { function DL(n) { if (dlayer.has(n)) return dlayer.get(n); dlayer.set(n, 0); const ds = dsucc.get(n) || []; const v = ds.length ? Math.max(...ds.map(DL)) + 1 : 0; dlayer.set(n, v); return v; } DREAM.forEach(DL); })();
+const maxDL = Math.max(0, ...DREAM.map(d => dlayer.get(d)));
+
+// ---- colour: Inferno, near-black low end clamped off -----------------------
+const INFERNO = ["#000004","#1b0c41","#4a0c6b","#781c6d","#a52c60","#cf4446","#ed6925","#fb9a06","#f7d13d","#fcffa4"]
+  .map(h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]);
+const FLOOR_T = 0.25;
+function ramp(t) {
+  t = FLOOR_T + Math.max(0, Math.min(1, t)) * (1 - FLOOR_T);
+  const s = t * (INFERNO.length - 1), i = Math.floor(s), f = s - i, a = INFERNO[i], b = INFERNO[Math.min(i + 1, INFERNO.length - 1)];
+  return `rgb(${Math.round(a[0]+(b[0]-a[0])*f)},${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)})`;
+}
+let layoutMode = "spatial";     // bands | spatial | strip
+const cellColor = id => ramp(level.get(id) / maxLevel);
+
+const FLOOR = 12 * 1024;
+const lval = id => Math.max(SELF.get(id), FLOOR);
+function fmt(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MiB" : b >= 1024 ? (b / 1024).toFixed(0) + " KiB" : b + " B"; }
+
+// ---- squarified treemap ----------------------------------------------------
+function squarify(items, x, y, w, h) {
+  items = items.filter(d => d.area > 0).sort((a, b) => b.area - a.area);
+  const out = []; let rect = { x, y, w, h }, row = [];
+  const worst = (r, len) => { const s = r.reduce((a, d) => a + d.area, 0); const mx = Math.max(...r.map(d => d.area)), mn = Math.min(...r.map(d => d.area)); const l2 = len * len, s2 = s * s; return Math.max(l2 * mx / s2, s2 / (l2 * mn)); };
+  const flush = () => {
+    const s = row.reduce((a, d) => a + d.area, 0);
+    if (rect.w >= rect.h) { const cw = s / rect.h; let yy = rect.y; for (const d of row) { const hh = d.area / cw; out.push({ ...d, x: rect.x, y: yy, w: cw, h: hh }); yy += hh; } rect = { x: rect.x + cw, y: rect.y, w: rect.w - cw, h: rect.h }; }
+    else { const rh = s / rect.w; let xx = rect.x; for (const d of row) { const ww = d.area / rh; out.push({ ...d, x: xx, y: rect.y, w: ww, h: rh }); xx += ww; } rect = { x: rect.x, y: rect.y + rh, w: rect.w, h: rect.h - rh }; }
+    row = [];
+  };
+  let i = 0;
+  while (i < items.length) { const len = Math.min(rect.w, rect.h), nx = items[i]; if (!row.length || worst(row, len) >= worst([...row, nx], len)) { row.push(nx); i++; } else flush(); }
+  if (row.length) flush();
+  return out;
+}
+// ---- depth-aware layouts (deep at top, shallow at bottom) -------------------
+function squ(items, x, y, w, h) {                 // plain squarified (size-ordered)
+  const tot = items.reduce((s, d) => s + d.val, 0);
+  if (tot <= 0 || w <= 0 || h <= 0) return [];
+  const sc = (w * h) / tot;
+  return squarify(items.map(d => ({ id: d.id, area: d.val * sc })), x, y, w, h);
+}
+function stripRows(items, x, y, w, h) {           // strict strip rows, high ORD first -> top
+  const src = items.slice().sort((a, b) => ORD.get(b.id) - ORD.get(a.id));
+  const tot = src.reduce((s, d) => s + d.val, 0);
+  if (tot <= 0 || w <= 0 || h <= 0) return [];
+  const sc = (w * h) / tot, out = []; let i = 0, y0 = y;
+  const asp = (i, c) => { let a = 0; for (let k = i; k < i + c; k++) a += src[k].val * sc; const rh = a / w; let m = 0; for (let k = i; k < i + c; k++) { const wd = src[k].val * sc / rh; m += Math.max(wd / rh, rh / wd); } return m / c; };
+  while (i < src.length) {
+    let cnt = 1; while (i + cnt < src.length && asp(i, cnt + 1) <= asp(i, cnt)) cnt++;
+    let a = 0; for (let k = i; k < i + cnt; k++) a += src[k].val * sc; let rh = a / w; if (!isFinite(rh) || rh <= 0) rh = h;
+    let x0 = x; for (let k = i; k < i + cnt; k++) { const wd = src[k].val * sc / rh; out.push({ id: src[k].id, x: x0, y: y0, w: wd, h: rh }); x0 += wd; }
+    y0 += rh; i += cnt;
+  }
+  return out;
+}
+function bands(items, x, y, w, h) {               // bucket by ORD, high band on top
+  const NB = 4, sz = Math.max(1, Math.ceil((ORDMAX + 1) / NB));
+  const buckets = Array.from({ length: NB }, () => []);
+  for (const it of items) buckets[Math.min(NB - 1, Math.floor(ORD.get(it.id) / sz))].push(it);
+  const tot = items.reduce((s, d) => s + d.val, 0); if (tot <= 0) return [];
+  const out = []; let y0 = y;
+  for (let b = NB - 1; b >= 0; b--) {
+    const band = buckets[b]; if (!band.length) continue;
+    const hb = h * (band.reduce((s, d) => s + d.val, 0) / tot);
+    for (const r of squ(band, x, y0, w, hb)) out.push(r); y0 += hb;
+  }
+  return out;
+}
+function spatial(items, x, y, w, h) {             // (2) recursive depth-median bisection + squarify leaves
+  if (w <= 0 || h <= 0) return [];
+  if (items.length <= 6) return squ(items, x, y, w, h);
+  const ls = items.map(it => ORD.get(it.id));
+  if (Math.max(...ls) - Math.min(...ls) <= 1) return squ(items, x, y, w, h);
+  const src = items.slice().sort((a, b) => ORD.get(b.id) - ORD.get(a.id));   // high ORD first -> top
+  const tot = src.reduce((s, d) => s + d.val, 0);
+  let acc = 0, k = 0; for (; k < src.length - 1; k++) { acc += src[k].val; if (acc >= tot / 2) break; }
+  if (k >= src.length - 1) k = src.length - 2;   // one item > half total: keep both halves non-empty
+  const deep = src.slice(0, k + 1), shallow = src.slice(k + 1);
+  const hTop = h * (deep.reduce((s, d) => s + d.val, 0) / tot);
+  return [...spatial(deep, x, y, w, hTop), ...spatial(shallow, x, y + hTop, w, h - hTop)];
+}
+const LAYOUT = { bands, spatial, strip: stripRows };
+
+// ---- render ----------------------------------------------------------------
+const wrap = document.getElementById("wrap");
+const svg = document.getElementById("edges");
+const dotzone = document.getElementById("dotzone");
+const tip = document.getElementById("tip");
+let rectGeom = new Map(), dotGeom = new Map();
+const depC = id => hasRect.has(id) ? rectGeom.get(id) : dotGeom.get(id);   // code uses code: anchor at the binary when there is one
+const cells = new Map(), dots = new Map(), labels = new Map();           // persistent elements
+const ANIM_MS = 450;
+
+function makeCell(id) {
+  const el = document.createElement("div");
+  el.className = "cell" + (isDot.get(id) ? " own" : ""); el.dataset.id = id;
+  const l = document.createElement("div"); l.className = "lab"; l.textContent = id; el.appendChild(l); el._lab = l;
+  el.addEventListener("mousemove", e => moveTip(id, e));
+  el.addEventListener("mouseenter", () => highlight(id));
+  el.addEventListener("mouseleave", clear);
+  return el;
+}
+function makeDot(id) {
+  const r = id === DATA.root ? 10 : 7;
+  const el = document.createElement("div"); el._r = r; el.dataset.id = id;
+  el.className = "dot " + (id === DATA.root ? "root" : hasRect.has(id) ? "own" : "ext");
+  el.style.width = (2 * r) + "px"; el.style.height = (2 * r) + "px";
+  el.addEventListener("mousemove", e => moveTip(id, e));
+  el.addEventListener("mouseenter", () => highlight(id));
+  el.addEventListener("mouseleave", clear);
+  return el;
+}
+
+// FLIP-style: positions update on the SAME elements, so CSS transitions animate them.
+function build(animate) {
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  wrap.classList.toggle("no-anim", !animate);
+  if (animate) void wrap.offsetWidth;   // commit transition-enabled state before moving (FLIP)
+  const DPITCH = 34, DTOP = 30;   // headroom for labels sitting above the dots
+  const Hd = Math.min(H * 0.46, DTOP + maxDL * DPITCH + 34);
+  dotzone.style.height = Hd + "px";
+
+  // 1) binary blocks (depth-aware layout) -- reuse elements, just re-place them
+  rectGeom = new Map();
+  const fanin = layoutMode === "fanin";
+  ORD = fanin ? finOrd : level; ORDMAX = fanin ? finMax : maxLevel;   // depth, or fan-in
+  const packFn = fanin ? spatial : LAYOUT[layoutMode];
+  for (const m of packFn(RECTS.map(n => ({ id: n, val: lval(n) })), 0, Hd, W, H - Hd)) {
+    rectGeom.set(m.id, { cx: m.x + m.w / 2, cy: m.y + m.h / 2 });
+    let el = cells.get(m.id);
+    if (!el) { el = makeCell(m.id); cells.set(m.id, el); wrap.appendChild(el); }
+    el.style.background = cellColor(m.id);
+    el.style.left = m.x + "px"; el.style.top = m.y + "px"; el.style.width = m.w + "px"; el.style.height = m.h + "px";
+    el._lab.style.display = (m.w > 26 && m.h > 12) ? "" : "none";
+  }
+
+  // 2) dots: x = barycenter of {dependency targets, own rectangle}
+  const byDL = Array.from({ length: maxDL + 1 }, () => []);
+  DREAM.forEach(d => byDL[dlayer.get(d)].push(d));
+  const dx = new Map();
+  for (let L = 0; L <= maxDL; L++) for (const d of byDL[L]) {
+    const xs = [];
+    for (const t of (succ.get(d) || [])) {
+      if (isDot.get(t)) { if (dx.has(t)) xs.push(dx.get(t)); }
+      else { const c = rectGeom.get(t); if (c) xs.push(c.cx); }
+    }
+    if (hasRect.has(d)) xs.push(rectGeom.get(d).cx);
+    dx.set(d, xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : W / 2);
+  }
+  const MARGIN = 48, MINGAP = 64;
+  for (const row of byDL) {
+    row.sort((a, b) => dx.get(a) - dx.get(b));
+    for (let i = 1; i < row.length; i++) if (dx.get(row[i]) - dx.get(row[i - 1]) < MINGAP) dx.set(row[i], dx.get(row[i - 1]) + MINGAP);
+    if (row.length) { const over = dx.get(row[row.length - 1]) - (W - MARGIN); if (over > 0) for (const d of row) dx.set(d, dx.get(d) - over); }
+    for (const d of row) dx.set(d, Math.max(MARGIN, Math.min(W - MARGIN, dx.get(d))));
+  }
+  dotGeom = new Map();
+  for (const d of DREAM) {
+    const cx = dx.get(d), cy = DTOP + (maxDL - dlayer.get(d)) * DPITCH;
+    dotGeom.set(d, { cx, cy });
+    let el = dots.get(d); if (!el) { el = makeDot(d); dots.set(d, el); wrap.appendChild(el); }
+    el.style.left = (cx - el._r) + "px"; el.style.top = (cy - el._r) + "px";
+    let lab = labels.get(d);
+    if (!lab) { lab = document.createElement("div"); lab.className = "dlabel"; lab.textContent = d; labels.set(d, lab); wrap.appendChild(lab); }
+    lab.style.left = cx + "px"; lab.style.top = (cy - el._r - 2) + "px";   // label above the dot
+  }
+  wrap.appendChild(svg);   // keep the edges layer last, above everything
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+  // edges tie moving elements together: hide during the tween, redraw at the end
+  if (animate) { svg.innerHTML = ""; setTimeout(() => drawBase(), ANIM_MS + 30); }
+  else drawBase();
+}
+function pathC(ca, cb, color, opacity, wdt, dash) {
+  if (!ca || !cb) return;
+  const mx = (ca.cx + cb.cx) / 2, my = (ca.cy + cb.cy) / 2 - Math.abs(ca.cx - cb.cx) * 0.08;
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", `M${ca.cx},${ca.cy} Q${mx},${my} ${cb.cx},${cb.cy}`);
+  p.setAttribute("fill", "none"); p.setAttribute("stroke", color);
+  p.setAttribute("stroke-width", wdt || 1.2); p.setAttribute("opacity", opacity == null ? 0.75 : opacity);
+  if (dash) p.setAttribute("stroke-dasharray", dash);
+  svg.appendChild(p);
+}
+const cvar = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+function drawBase() {   // resting state
+  svg.innerHTML = "";
+  const fg = cvar("--fg"), ct = cvar("--celltext");
+  for (const [a, b] of DATA.edges) if (hasRect.has(a) && hasRect.has(b)) pathC(rectGeom.get(a), rectGeom.get(b), ct, 0.3, 0.8);   // binary->binary mesh, rectangle text colour
+  for (const [a, b] of DATA.edges) if (isDot.get(a) && isDot.get(b)) pathC(dotGeom.get(a), dotGeom.get(b), fg, 0.55, 1);           // library skeleton
+  for (const d of DREAM_CODE) pathC(dotGeom.get(d), rectGeom.get(d), fg, 0.4, 1, "2 3");                                           // produces
+}
+function cone(start, adj) { const seen = new Set(), q = [start]; while (q.length) { const u = q.pop(); for (const v of (adj.get(u) || [])) if (!seen.has(v)) { seen.add(v); q.push(v); } } return seen; }
+function highlight(id) {
+  const down = cone(id, succ), up = cone(id, pred), keep = new Set([id, ...down, ...up]);
+  for (const el of wrap.querySelectorAll(".cell,.dot")) {
+    const i = el.dataset.id, isD = el.classList.contains("dot");
+    el.classList.toggle("dim", !keep.has(i));
+    el.classList.toggle(isD ? "dhl" : "hl", i === id);
+  }
+  svg.innerHTML = "";
+  const faint2 = cvar("--edgefaint2"), dep = cvar("--edgedep"), con = cvar("--edgecon"), gold = cvar("--gold");
+  for (const [a, b] of DATA.edges) if (isDot.get(a) && isDot.get(b) && !(keep.has(a) && keep.has(b))) pathC(dotGeom.get(a), dotGeom.get(b), faint2, 0.5, 1);
+  for (const [a, b] of DATA.edges) {
+    const dash = hasRect.has(a) !== hasRect.has(b) ? "5 4" : null;   // mixed library<->binary = dashed; homogeneous = solid
+    if ((a === id || down.has(a)) && down.has(b)) pathC(depC(a), depC(b), dep, 0.85, 1.3, dash);
+    else if ((b === id || up.has(b)) && up.has(a)) pathC(depC(a), depC(b), con, 0.85, 1.3, dash);
+  }
+  // produces links for highlighted Dream-with-code (bright for the hovered one)
+  for (const d of DREAM_CODE) if (keep.has(d)) pathC(dotGeom.get(d), rectGeom.get(d), gold, d === id ? 0.95 : 0.5, d === id ? 2 : 1.2, "2 3");
+}
+function clear() { for (const el of wrap.querySelectorAll(".cell,.dot")) el.classList.remove("dim", "hl", "dhl"); tip.style.display = "none"; drawBase(); }
+function moveTip(id, e) {
+  const down = cone(id, succ);
+  const blocks = [...down].filter(n => hasRect.has(n));
+  const bbytes = blocks.reduce((s, n) => s + SELF.get(n), 0);
+  let body;
+  if (isDot.get(id)) {
+    const own = SELF.get(id);
+    body = `<b>${id}</b> <span class="k">(Dream library${hasRect.has(id) ? " + binary block" : ""})</span><br>`
+      + (hasRect.has(id) ? `<span class="own">own code:</span> ${fmt(own)}<br>` : `<span class="k">no own binary</span><br>`)
+      + `<span class="dep">pulls in:</span> ${blocks.length} blocks (${fmt(bbytes)})<br>`
+      + `<span class="k">total footprint:</span> ${fmt(own + bbytes)}`;
+  } else {
+    const up = cone(id, pred), upDots = [...up].filter(n => isDot.get(n));
+    body = `<b>${id}</b> <span class="k">(binary block, ${METRIC_SHORT}=${metricBase.get(id)})</span><br>`
+      + `<span class="k">own code:</span> ${fmt(SELF.get(id))}<br>`
+      + `<span class="dep">needs:</span> ${(succ.get(id)||[]).length} direct, ${blocks.length} transitive (${fmt(bbytes)})<br>`
+      + `<span class="con">pulled in by:</span> ${upDots.length} Dream libs`;
+  }
+  tip.innerHTML = body; tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 320) + "px";
+  tip.style.top = Math.min(e.clientY + 14, innerHeight - 92) + "px";
+}
+
+// ---- colormap toolbar ------------------------------------------------------
+const legend = document.getElementById("legend");
+function buildLegend() {
+  legend.innerHTML = "";
+  const lab = document.createElement("span"); lab.className = "ctrllabel"; lab.textContent = "Depth colour:"; legend.appendChild(lab);
+  const grad = Array.from({ length: 16 }, (_, i) => ramp(1 - i / 15)).join(",");   // surface (bright) left -> foundational (dark) right
+  const gb = document.createElement("span");
+  gb.innerHTML = `${GLAB[0]}<span class="gbar" style="background:linear-gradient(to right,${grad})"></span>${GLAB[1]}`;
+  legend.appendChild(gb);
+  const key = document.createElement("span"); key.style.marginLeft = "10px";
+  key.innerHTML = `&#9679; Dream lib &nbsp; <u>abc</u> Dream binary &nbsp; &middot;&middot;&middot; produces`;
+  legend.appendChild(key);
+  const ll = document.createElement("span"); ll.className = "ctrllabel"; ll.style.marginLeft = "10px"; ll.textContent = "Layout:"; legend.appendChild(ll);
+  for (const [k, label] of [["bands", "Bands"], ["spatial", "Spatial"], ["strip", "Strip"], ["fanin", "Fan-in"]]) {
+    const b = document.createElement("button"); b.textContent = label;
+    b.className = "schemebtn" + (k === layoutMode ? " active" : "");
+    b.onclick = () => { if (k !== layoutMode) { layoutMode = k; build(true); buildLegend(); } };
+    legend.appendChild(b);
+  }
+  const tl = document.createElement("span"); tl.className = "ctrllabel"; tl.style.marginLeft = "10px"; tl.textContent = "Theme:"; legend.appendChild(tl);
+  for (const [k, label] of [["dark", "Dark"], ["light", "Light"]]) {
+    const on = (k === "light") === document.body.classList.contains("light");
+    const b = document.createElement("button"); b.textContent = label;
+    b.className = "schemebtn" + (on ? " active" : "");
+    b.onclick = () => { document.body.classList.toggle("light", k === "light"); drawBase(); buildLegend(); };
+    legend.appendChild(b);
+  }
+}
+
+(function () {   // size-distribution stats
+  const sz = RECTS.map(id => Math.max(SELF.get(id), 1)).sort((a, b) => a - b);
+  const n = sz.length, tot = sz.reduce((s, x) => s + x, 0);
+  const q = p => sz[Math.min(n - 1, Math.max(0, Math.round(p * (n - 1))))];
+  let gs = 0; for (let i = 0; i < n; i++) gs += (i + 1) * sz[i];
+  const gini = 2 * gs / (n * tot) - (n + 1) / n, top5 = sz.slice(-5).reduce((s, x) => s + x, 0);
+  document.getElementById("statline").innerHTML =
+    `n=<b>${n}</b> blocks &middot; total=<b>${fmt(tot)}</b> &middot; median=<b>${fmt(q(.5))}</b> &middot; `
+    + `p90=<b>${fmt(q(.9))}</b> &middot; p95=<b>${fmt(q(.95))}</b> &middot; p99=<b>${fmt(q(.99))}</b> &middot; `
+    + `Gini=<b>${gini.toFixed(2)}</b> &middot; top-5=<b>${Math.round(100 * top5 / tot)}%</b> of bytes`;
+})();
+
+document.getElementById("method").innerHTML =
+  "<b>Method.</b> <b>Rectangles = every binary block</b> (external libraries and Dream's own "
+  + "compiled libraries), area &prop; own compiled-artifact bytes (12&nbsp;KiB floor), squarified, "
+  + "coloured by depth. <b>Dots = Dream findlib libraries.</b> A Dream library that emits code is "
+  + "both a dot and a rectangle (its name <u>underlined</u>), tied by a dotted produces "
+  + "link; libraries with no compiled code of their own are dots only. A dependency anchors at the "
+  + "<b>binary</b> when the "
+  + "library has one (code uses code: rect&rarr;rect), else at the dot. Edge style encodes this: "
+  + "<b>solid</b> = homogeneous (binary&harr;binary or library&harr;library), <b>dashed</b> = mixed "
+  + "(library&harr;binary &mdash; the produces links and any dependency on a code-less library). "
+  + "Hover: <span style='color:#ffdf6b'>surface-tone = needs</span>, <span style='color:#7a5cf0'>"
+  + "foundational-tone = pulled in by</span> (each contrasts with the cells it crosses). <b>Depth</b> "
+  + "(toggle) &mdash; DAG depth isn't single-valued, so pick the axis: "
+  + "<i>From entries (long)</i> = longest path from an entry library (entries hot/top, foundational "
+  + "leaves cold/bottom; default); <i>From entries (short)</i> = via the <i>closest</i> entry (a block "
+  + "used directly by any library is hot); <i>Height below</i> = longest path down to a leaf (big "
+  + "dependency tail = hot). Colour and vertical position both follow it (hot = top). <b>Layout</b>: "
+  + "<i>Bands</i> = hard strata; <i>Spatial</i> = recursive depth-median bisection, squarified leaves; "
+  + "<i>Strip</i> = strict rows. <i>Fan-in</i> orders by <b>consumer count</b> instead of depth "
+  + "(few consumers on top), so &mdash; since area already = size &mdash; the large, low-fan-in "
+  + "&ldquo;bizarre&rdquo; blocks cluster near the top, a space-filling echo of the size-vs-consumers "
+  + "scatter. Switching Depth or Layout animates the blocks into place.";
+
+build(false);
+buildLegend();
+new ResizeObserver(() => build(false)).observe(wrap);
+addEventListener("resize", () => build(false));
+</script>
+</body>
+</html>
+"""
+
+out = HTML.replace("__DATA__", json.dumps(data, separators=(",", ":"))).replace("Dream", PROJECT)
+OUT.write_text(out)
+print("wrote %s  (%d bytes)" % (OUT, len(out)))
