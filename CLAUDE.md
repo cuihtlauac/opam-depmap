@@ -1,37 +1,35 @@
 # CLAUDE.md
 
 Guidance for working on **opam-depmap** — a small, dependency-free visualiser for
-the library dependency graph and binary-size distribution of an OCaml project.
+the library dependency graph and binary footprint of an OCaml project.
 
 ## What this is
 
-A three-stage pipeline that turns any opam package installed in a switch into
-two self-contained HTML pages:
+A two-stage pipeline that turns any opam package installed in a switch into a
+self-contained HTML page:
 
 ```
-ocamlfind + opam  --(bin/collect.py)-->  data.json  --(bin/build_map.py)-->          squarified_treemap.html
-                                                     \-(bin/build_distribution.py)-> distribution.html
+ocamlfind + opam  --(bin/collect.py)-->  data.json  --(bin/build_map.py)-->  squarified_treemap.html
 ```
 
 - **`bin/collect.py`** — reads only the opam switch: follows findlib `requires`
   from all the package's libraries for the graph, classifies each library as
   `own` (an opam package sharing the analysed package's `dev-repo`) or
-  `external`, measures a
-  size (compiled-artifact bytes in its findlib dir), and writes `data.json`.
+  `external`, measures a size (compiled-artifact bytes in its findlib dir), and
+  writes `data.json`.
   Configured via `DEPMAP_*` environment variables (see its docstring);
   `DEPMAP_PACKAGE` is required. No source checkout, `_build` or `odep`.
-- **`bin/build_map.py`** / **`bin/build_distribution.py`** — pure Python; they
-  inline `data.json` into a single HTML file with all layout/interaction in
-  vanilla browser JS. No build step, no external JS libraries, works offline by
-  double-click.
+- **`bin/build_map.py`** — pure Python; it inlines `data.json` into a single
+  HTML file with all layout/interaction in vanilla browser JS. No build step, no
+  external JS libraries, works offline by double-click.
 
 ## Conventions (keep these)
 
 - **Self-contained output.** The generated HTML embeds the data and all JS/CSS;
   never add a `<script src=...>` or external dependency.
 - **No JS frameworks.** Layout (squarified treemap, longest-path depth layering,
-  SVG charts) is hand-written; keep it that way.
-- **The generators are string templates.** The big `HTML = r"""..."""` block is
+  SVG edges) is hand-written; keep it that way.
+- **The generator is a string template.** The big `HTML = r"""..."""` block is
   the page; `__DATA__` is replaced with the JSON and the word `Dream` is
   replaced with the project name at emit time (so prose generalises but JS
   identifiers like `DREAM` must stay capitalised to avoid being rewritten).

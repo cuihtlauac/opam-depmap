@@ -6,8 +6,7 @@ needed. Starting at the package's findlib libraries, follows each library's
 findlib `requires` to get the dependency graph, classifies each library as the project's
 OWN (from the analysed package's source repo) or EXTERNAL (an installed
 dependency), measures a size for each (compiled-artifact bytes in its findlib
-install dir), and emits a self-contained data.json consumed by build_map.py /
-build_distribution.py.
+install dir), and emits a self-contained data.json consumed by build_map.py.
 
 Configuration (environment variables):
 

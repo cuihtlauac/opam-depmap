@@ -1,8 +1,8 @@
 # opam-depmap
 
-Visualise the **library dependency graph** and **binary-size distribution** of any
-opam package installed in your switch as two self-contained, offline HTML pages —
-no JS frameworks, no build step, no server, no source checkout.
+Visualise the **library dependency graph** and **binary footprint** of any opam
+package installed in your switch as a self-contained, offline HTML page — no JS
+frameworks, no build step, no server, no source checkout.
 
 ![four layout strategies](docs/layouts.gif)
 
@@ -22,10 +22,6 @@ no JS frameworks, no build step, no server, no source checkout.
   - A one-line **size-distribution readout** (n, total, median, p90/p95/p99, Gini,
     top-5 share) sits in the header.
 
-- **`distribution.html`** — the size distribution, built to surface **"bizarre"**
-  packages (large own-code carried by few consumers). Charts: **Size vs
-  consumers**, **Rank-size (Zipf)**, **Pareto**, **ECDF**.
-
 ## Requirements
 
 - `ocamlfind`, `opam`, `python3` (3.8+), and a browser to view the output
@@ -41,14 +37,14 @@ cd opam-depmap
 
 # Point it at any installed opam package:
 make PACKAGE=dream
-# -> out/data.json  out/squarified_treemap.html  out/distribution.html
+# -> out/data.json  out/squarified_treemap.html
 ```
 
 Every stage leaves its output in `out/`: the collected data (`data.json`) and
-the two pages. Re-running `make` recomputes the data but only rewrites it when
-its content changed, so the pages are rebuilt only when something actually moved.
+the page. Re-running `make` recomputes the data but only rewrites it when its
+content changed, so the page is rebuilt only when something actually moved.
 
-Open the HTML files in a browser (they are fully self-contained — copy them
+Open the HTML file in a browser (it is fully self-contained — copy it
 anywhere). Or run the stages by hand:
 
 ```sh
@@ -56,8 +52,7 @@ anywhere). Or run the stages by hand:
 DEPMAP_PACKAGE=dream DEPMAP_OUT=/tmp/data.json opam exec -- python3 bin/collect.py
 
 # 2. render (pure python, no opam needed)
-DEPMAP_DATA=/tmp/data.json DEPMAP_HTML=/tmp/map.html  python3 bin/build_map.py
-DEPMAP_DATA=/tmp/data.json DEPMAP_DIST=/tmp/dist.html python3 bin/build_distribution.py
+DEPMAP_DATA=/tmp/data.json DEPMAP_HTML=/tmp/map.html python3 bin/build_map.py
 ```
 
 ### Configuration
@@ -85,8 +80,8 @@ opam switch: ocamlfind (requires closure & install dirs) + opam (dev-repo)
         ▼   bin/collect.py
    data.json  { project, roots, nodes:[{id, kind: own|external, self}], edges }
         │
-        ├──► bin/build_map.py           -> squarified_treemap.html
-        └──► bin/build_distribution.py  -> distribution.html
+        ▼   bin/build_map.py
+   squarified_treemap.html
 ```
 
 - **Graph:** the findlib `requires` closure of the package's libraries —
