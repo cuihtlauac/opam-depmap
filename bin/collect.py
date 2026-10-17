@@ -1,145 +1,99 @@
 #!/usr/bin/env python3
-"""Collect an OCaml project's library dependency DAG + per-library sizes -> data.json.
+"""Collect an installed opam package's library dependency DAG + per-library sizes -> data.json.
 
-Runs `odep` to get the dune/findlib library graph, classifies each library as the
-project's OWN (a library you author) or EXTERNAL (an installed dependency),
-measures a size for each (compiled-artifact bytes), and emits a self-contained
-data.json consumed by build_map.py / build_distribution.py.
+Reads everything from the current opam switch -- no source checkout or `_build`
+needed. Starting at a root findlib library, follows each library's findlib
+`requires` to get the dependency graph, classifies each library as the project's
+OWN (from the analysed package's source repo) or EXTERNAL (an installed
+dependency), measures a size for each (compiled-artifact bytes in its findlib
+install dir), and emits a self-contained data.json consumed by build_map.py /
+build_distribution.py.
 
-Configuration (environment variables, all optional -- sensible defaults are
-auto-detected from the project's dune-project and *.opam files):
+Configuration (environment variables):
 
-  DEPMAP_PROJECT   path to the OCaml project to analyse        (default: cwd)
+  DEPMAP_PACKAGE   installed opam package to analyse           (required)
   DEPMAP_OUT       output json path                            (default: ./data.json)
-  DEPMAP_NAME      display name for the project                (default: dune-project name)
-  DEPMAP_OWN       regex matching the project's OWN libraries  (default: ^(<opam packages>)([.]|$))
-  DEPMAP_ROOT      library to root the graph at; only libs     (default: DEPMAP_NAME)
-                   reachable from it are kept (prunes alt backends)
+  DEPMAP_NAME      display name for the project                (default: DEPMAP_PACKAGE)
+  DEPMAP_OWN       regex matching the project's OWN libraries  (default: ^(<own packages>)([.]|$),
+                   own packages = installed opam packages sharing DEPMAP_PACKAGE's dev-repo)
+  DEPMAP_ROOT      findlib library to root the graph at; the   (default: DEPMAP_PACKAGE)
+                   graph is everything it (transitively) requires
 
-Requires: opam, odep (`opam install odep`), ocamlfind, a built project (`dune build`).
+Requires: opam, ocamlfind, and the package installed in the switch (`opam install`,
+or `opam pin` a local checkout). Set OPAMSWITCH to analyse another switch.
 """
-import json, os, re, subprocess, glob, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 
-ROOT = Path(os.environ.get("DEPMAP_PROJECT", ".")).resolve()
 OUT = Path(os.environ.get("DEPMAP_OUT", "data.json")).resolve()
+PACKAGE = os.environ.get("DEPMAP_PACKAGE") or sys.exit("set DEPMAP_PACKAGE to an installed opam package")
 
 def sh(args):
-    return subprocess.run(["opam", "exec", "--"] + args, cwd=ROOT,
+    return subprocess.run(["opam", "exec", "--"] + args,
                           capture_output=True, text=True).stdout.strip()
 
 # --- auto-detect project name + own-library regex ----------------------------
-def dune_project_name():
-    f = ROOT / "dune-project"
-    if f.exists():
-        m = re.search(r"\(name\s+([^\s)]+)", f.read_text())
-        if m:
-            return m.group(1)
-    return ROOT.name
+# Own packages: installed opam packages built from the same source repo.
+def own_packages():
+    repos = {}
+    for line in sh(["opam", "list", "--installed", "--short", "--columns=name,dev-repo:"]).splitlines():
+        name, _, repo = line.partition(" ")
+        repos[name] = repo.strip()
+    if PACKAGE not in repos:
+        sys.exit(f"opam package {PACKAGE!r} is not installed in this switch")
+    repo = repos[PACKAGE]
+    return sorted(n for n, r in repos.items() if r == repo) if repo else [PACKAGE]
 
-NAME = os.environ.get("DEPMAP_NAME") or dune_project_name()
-opam_pkgs = sorted(p.stem for p in ROOT.glob("*.opam")) or [NAME]
+NAME = os.environ.get("DEPMAP_NAME") or PACKAGE
 OWN_RE = re.compile(os.environ.get("DEPMAP_OWN")
-                    or r"^(" + "|".join(re.escape(p) for p in opam_pkgs) + r")([.]|$)")
-ROOT_LIB = os.environ.get("DEPMAP_ROOT", NAME)
+                    or r"^(" + "|".join(re.escape(p) for p in own_packages()) + r")([.]|$)")
+ROOT_LIB = os.environ.get("DEPMAP_ROOT", PACKAGE)
 own = lambda n: bool(OWN_RE.match(n))
 
-# --- 1. library graph from odep ----------------------------------------------
-dot = sh(["odep", "dune", "--tred-libraries=false", "--with-modules=false", str(ROOT)])
-if not dot:
-    sys.exit("odep produced no output -- is odep installed and the project built?")
-edge_re = re.compile(r'"([^"]+)"\s*->\s*"([^"]+)"')
-own_edges, nodes = [], set()
-for line in dot.splitlines():
-    m = edge_re.search(line)
-    if m and own(m.group(1)):          # trust OWN-origin edges from odep
-        a, b = m.group(1), m.group(2)
-        own_edges.append((a, b)); nodes.add(a); nodes.add(b)
-
-# --- 2. external closure via findlib `requires` ------------------------------
-edges = list(own_edges)
-reqs_cache = {}
+# --- 1. library graph: findlib `requires` closure of the root ---------------
 def requires(pkg):
-    if pkg not in reqs_cache:
-        out = sh(["ocamlfind", "query", "-format", "%(requires)", pkg])
-        reqs_cache[pkg] = out.split() if out else []
-    return reqs_cache[pkg]
+    out = sh(["ocamlfind", "query", "-format", "%(requires)", pkg])
+    return out.split() if out else []
 
-worklist = [n for n in nodes if not own(n)]
-seen = set()
+if not sh(["ocamlfind", "query", ROOT_LIB]):
+    sys.exit(f"findlib library {ROOT_LIB!r} not found -- set DEPMAP_ROOT to one of {PACKAGE}'s libraries")
+nodes, edges, worklist = set(), [], [ROOT_LIB]
 while worklist:
     pkg = worklist.pop()
-    if pkg in seen:
+    if pkg in nodes:
         continue
-    seen.add(pkg); nodes.add(pkg)
+    nodes.add(pkg)
     for dep in requires(pkg):
-        nodes.add(dep); edges.append((pkg, dep))
-        if dep not in seen and not own(dep):
+        edges.append((pkg, dep))
+        if dep not in nodes:
             worklist.append(dep)
 
-# --- 3. keep only libraries reachable from the root (prunes alt backends) -----
-if ROOT_LIB in nodes:
-    succ = {}
-    for a, b in edges:
-        succ.setdefault(a, []).append(b)
-    reach, stack = {ROOT_LIB}, [ROOT_LIB]
-    while stack:
-        for v in succ.get(stack.pop(), []):
-            if v not in reach:
-                reach.add(v); stack.append(v)
-    nodes = {n for n in nodes if n in reach}
-    edges = [(a, b) for a, b in edges if a in reach and b in reach]
-
-# --- 4. sizes (compiled-artifact bytes) --------------------------------------
+# --- 2. sizes (compiled-artifact bytes) --------------------------------------
 EXTS = (".a", ".cmxa", ".cmxs", ".cma", ".cmi", ".cmx")
-def artifact_bytes(path, recursive):    # sum compiled artifacts only
+def artifact_bytes(path):               # sum top-level compiled artifacts only
     total = 0
-    for dp, dirs, fs in os.walk(path):
-        for f in fs:
-            if f.endswith(EXTS):
-                try: total += os.path.getsize(os.path.join(dp, f))
-                except OSError: pass
-        if not recursive:
-            dirs[:] = []                # top level only
+    for f in os.scandir(path):
+        if f.name.endswith(EXTS) and f.is_file():
+            total += f.stat().st_size
     return total
 
-self_size = {}
-# external: installed findlib dir, deduped so subpackages sharing a dir attribute
-# the full size to the shortest name and 0 to the rest.
-by_dir = {}
+# Each library's installed findlib dir (top level only: sub-libraries live in
+# subdirs), deduped so libraries sharing a dir attribute the full size to the
+# shortest name and 0 to the rest.
+self_size, by_dir = {}, {}
 for n in nodes:
-    if own(n):
-        continue
     d = sh(["ocamlfind", "query", "-format", "%d", n])
     if d and os.path.isdir(d):
         by_dir.setdefault(os.path.realpath(d), []).append(n)
 for rp, pkgs in by_dir.items():
     owner = min(pkgs, key=len)
     for p in pkgs:
-        self_size[p] = artifact_bytes(rp, recursive=False) if p == owner else 0
+        self_size[p] = artifact_bytes(rp) if p == owner else 0
 
-# own: this library's artifacts in _build -- the archive dir (top level, which
-# excludes sibling sub-library subdirs) plus the library's own .objs dir.
-build = ROOT / "_build" / "default"
-for n in nodes:
-    if not own(n):
-        continue
-    base = n.replace(".", "__").replace("-", "_")       # dune archive naming
-    hit = None
-    for e in (".cmxa", ".cma", ".a"):
-        g = glob.glob(str(build / "**" / (base + e)), recursive=True)
-        if g: hit = os.path.dirname(g[0]); break
-    if not hit:
-        self_size[n] = 0; continue
-    total = artifact_bytes(hit, recursive=False)        # top-level archives in the lib dir
-    for objs in glob.glob(os.path.join(hit, ".*.objs")):
-        total += artifact_bytes(objs, recursive=True)   # the lib's compiled modules
-    self_size[n] = total
-
-# --- 5. emit ------------------------------------------------------------------
+# --- 3. emit ------------------------------------------------------------------
 out = {
     "project": NAME,
-    "root": ROOT_LIB if ROOT_LIB in nodes else "",
+    "root": ROOT_LIB,
     "nodes": [{"id": n, "kind": "own" if own(n) else "external", "self": self_size.get(n, 0)}
               for n in sorted(nodes)],
     "edges": sorted(set((a, b) for a, b in edges)),

@@ -1,38 +1,55 @@
-# opam-depmap -- generate the dependency map + size distribution for an OCaml project.
+# opam-depmap -- generate the dependency map + size distribution for an installed opam package.
 #
-#   make PROJECT=/path/to/ocaml/project      # -> out/{data.json,squarified_treemap.html,distribution.html}
-#   make example                             # regenerate the bundled Dream example (needs DREAM=...)
+#   make PACKAGE=<opam package>              # -> out/{data.json,squarified_treemap.html,distribution.html}
+#   make example                             # regenerate the bundled Dream example
 #
-# The project must be built (`dune build`) and `odep` installed (`opam install odep`).
+# Every stage writes a file:
+#
+#   collect.py -> $(OUT)/data.json -> build_map.py          -> $(OUT)/squarified_treemap.html
+#                                  \-> build_distribution.py -> $(OUT)/distribution.html
+#
+# The opam switch lives outside make's view, so data.json is recomputed on every
+# run but only rewritten when its content changes; the HTML is rebuilt only when
+# data.json (or its generator) actually changed.
+#
+# The package must be installed in the current opam switch (set OPAMSWITCH to use another).
 
-PROJECT ?= .
+PACKAGE ?=
 OUT     ?= out
 PYTHON  ?= python3
 HERE    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+O       := $(abspath $(OUT))
 
-.PHONY: all collect map dist clean example
-all: collect map dist
-	@echo "open $(OUT)/squarified_treemap.html"
+# Move $1.tmp over $1 only if it differs, so unchanged outputs keep their mtime.
+update = if cmp -s $1.tmp $1; then rm -f $1.tmp; else mv $1.tmp $1; fi
 
-collect:
-	@mkdir -p $(OUT)
-	cd $(PROJECT) && DEPMAP_PROJECT=$(abspath $(PROJECT)) DEPMAP_OUT=$(abspath $(OUT))/data.json \
-		opam exec -- $(PYTHON) $(HERE)/bin/collect.py
+.PHONY: all collect map dist clean example FORCE
+all: $(O)/squarified_treemap.html $(O)/distribution.html
+	@echo "open $(O)/squarified_treemap.html"
 
-map:
-	DEPMAP_DATA=$(abspath $(OUT))/data.json DEPMAP_HTML=$(abspath $(OUT))/squarified_treemap.html \
-		$(PYTHON) $(HERE)/bin/build_map.py
+collect: $(O)/data.json
+map:     $(O)/squarified_treemap.html
+dist:    $(O)/distribution.html
 
-dist:
-	DEPMAP_DATA=$(abspath $(OUT))/data.json DEPMAP_DIST=$(abspath $(OUT))/distribution.html \
-		$(PYTHON) $(HERE)/bin/build_distribution.py
+$(O):
+	mkdir -p $@
 
-# Regenerate the committed example from a local Dream checkout: make example DREAM=/path/to/dream
+$(O)/data.json: $(HERE)/bin/collect.py FORCE | $(O)
+	@test -n "$(PACKAGE)" || { echo "usage: make PACKAGE=<installed opam package>" >&2; exit 1; }
+	DEPMAP_PACKAGE=$(PACKAGE) DEPMAP_OUT=$@.tmp opam exec -- $(PYTHON) $(HERE)/bin/collect.py
+	@$(call update,$@)
+
+$(O)/squarified_treemap.html: $(O)/data.json $(HERE)/bin/build_map.py
+	DEPMAP_DATA=$< DEPMAP_HTML=$@ $(PYTHON) $(HERE)/bin/build_map.py
+
+$(O)/distribution.html: $(O)/data.json $(HERE)/bin/build_distribution.py
+	DEPMAP_DATA=$< DEPMAP_DIST=$@ $(PYTHON) $(HERE)/bin/build_distribution.py
+
+# Regenerate the committed example (needs dream installed: opam install dream)
 example:
-	cd $(DREAM) && DEPMAP_PROJECT=$(DREAM) DEPMAP_OUT=$(HERE)/example/dream/data.json \
-		opam exec -- $(PYTHON) $(HERE)/bin/collect.py
-	DEPMAP_DATA=$(HERE)/example/dream/data.json DEPMAP_HTML=$(HERE)/example/dream/squarified_treemap.html $(PYTHON) bin/build_map.py
-	DEPMAP_DATA=$(HERE)/example/dream/data.json DEPMAP_DIST=$(HERE)/example/dream/distribution.html $(PYTHON) bin/build_distribution.py
+	$(MAKE) -f $(HERE)/Makefile PACKAGE=dream OUT=$(HERE)/example/dream
 
 clean:
-	rm -rf $(OUT) bin/__pycache__
+	rm -rf $(O) $(HERE)/bin/__pycache__
+
+FORCE:

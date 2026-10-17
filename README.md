@@ -1,8 +1,8 @@
 # opam-depmap
 
 Visualise the **library dependency graph** and **binary-size distribution** of any
-built OCaml/dune project as two self-contained, offline HTML pages — no JS
-frameworks, no build step, no server.
+opam package installed in your switch as two self-contained, offline HTML pages —
+no JS frameworks, no build step, no server, no source checkout.
 
 ![four layout strategies](docs/layouts.gif)
 
@@ -28,10 +28,10 @@ frameworks, no build step, no server.
 
 ## Requirements
 
-- [`odep`](https://github.com/sim642/odep) — `opam install odep`
 - `ocamlfind`, `opam`, `python3` (3.8+), and a browser to view the output
-- The target project must be **built** (`dune build`) so `_build/` and the
-  findlib install dirs exist.
+- The package to analyse must be **installed** in the current opam switch
+  (`opam install <pkg>`, or `opam pin` a local checkout to map your own work).
+  Set `OPAMSWITCH` to use another switch.
 
 ## Usage
 
@@ -39,18 +39,21 @@ frameworks, no build step, no server.
 git clone https://github.com/cuihtlauac/opam-depmap
 cd opam-depmap
 
-# Point it at any built OCaml project:
-make PROJECT=/path/to/your/project
-# -> out/squarified_treemap.html  and  out/distribution.html
+# Point it at any installed opam package:
+make PACKAGE=dream
+# -> out/data.json  out/squarified_treemap.html  out/distribution.html
 ```
+
+Every stage leaves its output in `out/`: the collected data (`data.json`) and
+the two pages. Re-running `make` recomputes the data but only rewrites it when
+its content changed, so the pages are rebuilt only when something actually moved.
 
 Open the HTML files in a browser (they are fully self-contained — copy them
 anywhere). Or run the stages by hand:
 
 ```sh
-# 1. collect the graph + sizes  (run inside the project's opam switch)
-cd /path/to/project
-DEPMAP_OUT=/tmp/data.json opam exec -- python3 /path/to/opam-depmap/bin/collect.py
+# 1. collect the graph + sizes from the opam switch
+DEPMAP_PACKAGE=dream DEPMAP_OUT=/tmp/data.json opam exec -- python3 bin/collect.py
 
 # 2. render (pure python, no opam needed)
 DEPMAP_DATA=/tmp/data.json DEPMAP_HTML=/tmp/map.html  python3 bin/build_map.py
@@ -59,26 +62,25 @@ DEPMAP_DATA=/tmp/data.json DEPMAP_DIST=/tmp/dist.html python3 bin/build_distribu
 
 ### Configuration
 
-`collect.py` auto-detects sensible defaults from `dune-project` and `*.opam`;
-override via environment variables:
+`collect.py` is configured via environment variables:
 
 | variable | meaning | default |
 |---|---|---|
-| `DEPMAP_PROJECT` | project to analyse | current directory |
-| `DEPMAP_NAME` | display name | `dune-project` name |
-| `DEPMAP_OWN` | regex matching the project's **own** libraries | `^(<opam packages>)([.]\|$)` |
-| `DEPMAP_ROOT` | library to root the graph at (prunes alternate backends) | `DEPMAP_NAME` |
+| `DEPMAP_PACKAGE` | installed opam package to analyse | *(required)* |
+| `DEPMAP_NAME` | display name | `DEPMAP_PACKAGE` |
+| `DEPMAP_OWN` | regex matching the project's **own** libraries | `^(<own packages>)([.]\|$)`, own packages = installed packages sharing `DEPMAP_PACKAGE`'s `dev-repo` |
+| `DEPMAP_ROOT` | findlib library to root the graph at; the graph is what it transitively requires | `DEPMAP_PACKAGE` |
 | `DEPMAP_OUT` | output JSON path | `./data.json` |
 
 ## Example
 
 A worked example for [Dream](https://github.com/aantron/dream) is committed under
-[`example/dream/`](example/dream/) — open `example/dream/squarified_treemap.html`.
+[`example/dream/`](example/dream/) (regenerate with `make example`) — open `example/dream/squarified_treemap.html`.
 
 ## How it works
 
 ```
-odep (library graph) + ocamlfind (external closure & sizes)
+opam switch: ocamlfind (requires closure & install dirs) + opam (dev-repo)
         │
         ▼   bin/collect.py
    data.json  { project, root, nodes:[{id, kind: own|external, self}], edges }
@@ -87,10 +89,13 @@ odep (library graph) + ocamlfind (external closure & sizes)
         └──► bin/build_distribution.py  -> distribution.html
 ```
 
-- **Own vs external:** a library is *own* if its name matches the project's opam
-  packages; everything else reachable is *external*.
-- **Sizes** are compiled-artifact bytes — external libs from their findlib install
-  dir, own libs from their `_build` archive + `.objs`. This is a consistent
+- **Graph:** the findlib `requires` closure of the root library — exactly what
+  linking it pulls in (build-only tools and test deps never appear).
+- **Own vs external:** a library is *own* if it belongs to an opam package built
+  from the same source repo (`dev-repo`) as the analysed package; everything else
+  reachable is *external*.
+- **Sizes** are compiled-artifact bytes of each library's findlib install dir,
+  measured the same way for own and external libs. This is a consistent
   **proxy**, not opam/install size.
 - **Depth** is the longest path from an entry library; **colour and vertical
   position both follow it** (entries hot/top, foundational leaves cold/bottom).
