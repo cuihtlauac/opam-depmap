@@ -69,7 +69,7 @@ DEPMAP_DATA=/tmp/data.json DEPMAP_DIST=/tmp/dist.html python3 bin/build_distribu
 | `DEPMAP_PACKAGE` | installed opam package to analyse | *(required)* |
 | `DEPMAP_NAME` | display name | `DEPMAP_PACKAGE` |
 | `DEPMAP_OWN` | regex matching the project's **own** libraries | `^(<own packages>)([.]\|$)`, own packages = installed packages sharing `DEPMAP_PACKAGE`'s `dev-repo` |
-| `DEPMAP_ROOT` | findlib library to root the graph at; the graph is what it transitively requires | `DEPMAP_PACKAGE` |
+| `DEPMAP_ROOT` | space-separated findlib libraries to root the graph at; the graph is what they transitively require | all of the package's libraries (`<pkg>`, `<pkg>.*`) |
 | `DEPMAP_OUT` | output JSON path | `./data.json` |
 
 ## Example
@@ -83,14 +83,14 @@ A worked example for [Dream](https://github.com/aantron/dream) is committed unde
 opam switch: ocamlfind (requires closure & install dirs) + opam (dev-repo)
         │
         ▼   bin/collect.py
-   data.json  { project, root, nodes:[{id, kind: own|external, self}], edges }
+   data.json  { project, roots, nodes:[{id, kind: own|external, self}], edges }
         │
         ├──► bin/build_map.py           -> squarified_treemap.html
         └──► bin/build_distribution.py  -> distribution.html
 ```
 
-- **Graph:** the findlib `requires` closure of the root library — exactly what
-  linking it pulls in (build-only tools and test deps never appear).
+- **Graph:** the findlib `requires` closure of the package's libraries —
+  exactly what linking them pulls in (build-only tools and test deps never appear).
 - **Own vs external:** a library is *own* if it belongs to an opam package built
   from the same source repo (`dev-repo`) as the analysed package; everything else
   reachable is *external*.

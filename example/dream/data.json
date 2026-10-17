@@ -1,6 +1,8 @@
 {
  "project": "dream",
- "root": "dream",
+ "roots": [
+  "dream"
+ ],
  "nodes": [
   {
    "id": "angstrom",

@@ -14,8 +14,9 @@ ocamlfind + opam  --(bin/collect.py)-->  data.json  --(bin/build_map.py)-->     
 ```
 
 - **`bin/collect.py`** — reads only the opam switch: follows findlib `requires`
-  from the root library for the graph, classifies each library as `own` (an opam
-  package sharing the analysed package's `dev-repo`) or `external`, measures a
+  from all the package's libraries for the graph, classifies each library as
+  `own` (an opam package sharing the analysed package's `dev-repo`) or
+  `external`, measures a
   size (compiled-artifact bytes in its findlib dir), and writes `data.json`.
   Configured via `DEPMAP_*` environment variables (see its docstring);
   `DEPMAP_PACKAGE` is required. No source checkout, `_build` or `odep`.
@@ -34,7 +35,7 @@ ocamlfind + opam  --(bin/collect.py)-->  data.json  --(bin/build_map.py)-->     
   the page; `__DATA__` is replaced with the JSON and the word `Dream` is
   replaced with the project name at emit time (so prose generalises but JS
   identifiers like `DREAM` must stay capitalised to avoid being rewritten).
-- **`data.json` shape:** `{project, root, nodes:[{id,kind:own|external,self}], edges:[[a,b]]}`.
+- **`data.json` shape:** `{project, roots, nodes:[{id,kind:own|external,self}], edges:[[a,b]]}`.
 - Sizes are a **proxy** (compiled-artifact bytes), not install size.
 
 ## Regenerate / verify
@@ -57,8 +58,10 @@ google-chrome --headless --disable-gpu --dump-dom file://$PWD/out/squarified_tre
 
 - `collect.py` must run inside the target opam switch (`opam exec --`) and the
   package must be installed there; to map unreleased code, `opam pin` the checkout.
-- The graph is only what `DEPMAP_ROOT` requires: a package whose top-level library
-  is empty (e.g. `lwt` vs `lwt.unix`) needs `DEPMAP_ROOT` set to the library of interest.
+- The graph is rooted at every library the package installs (`<pkg>` and
+  `<pkg>.*`), since the top-level library is not always the top of the graph
+  (`lwt` requires nothing; `lwt.unix` requires `lwt`). `roots` in `data.json` lists
+  the entry points: roots no other library in the graph requires.
 - The `spatial` layout splits a size-sorted list by the median; guard the split
   so one item larger than half the group can't produce an empty half (infinite
   recursion).

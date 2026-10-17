@@ -250,9 +250,9 @@ function makeCell(id) {
   return el;
 }
 function makeDot(id) {
-  const r = id === DATA.root ? 10 : 7;
+  const isRoot = DATA.roots.includes(id), r = isRoot ? 10 : 7;
   const el = document.createElement("div"); el._r = r; el.dataset.id = id;
-  el.className = "dot " + (id === DATA.root ? "root" : hasRect.has(id) ? "own" : "ext");
+  el.className = "dot " + (isRoot ? "root" : hasRect.has(id) ? "own" : "ext");
   el.style.width = (2 * r) + "px"; el.style.height = (2 * r) + "px";
   el.addEventListener("mousemove", e => moveTip(id, e));
   el.addEventListener("mouseenter", () => highlight(id));

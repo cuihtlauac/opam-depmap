@@ -2,8 +2,8 @@
 """Collect an installed opam package's library dependency DAG + per-library sizes -> data.json.
 
 Reads everything from the current opam switch -- no source checkout or `_build`
-needed. Starting at a root findlib library, follows each library's findlib
-`requires` to get the dependency graph, classifies each library as the project's
+needed. Starting at the package's findlib libraries, follows each library's
+findlib `requires` to get the dependency graph, classifies each library as the project's
 OWN (from the analysed package's source repo) or EXTERNAL (an installed
 dependency), measures a size for each (compiled-artifact bytes in its findlib
 install dir), and emits a self-contained data.json consumed by build_map.py /
@@ -16,8 +16,9 @@ Configuration (environment variables):
   DEPMAP_NAME      display name for the project                (default: DEPMAP_PACKAGE)
   DEPMAP_OWN       regex matching the project's OWN libraries  (default: ^(<own packages>)([.]|$),
                    own packages = installed opam packages sharing DEPMAP_PACKAGE's dev-repo)
-  DEPMAP_ROOT      findlib library to root the graph at; the   (default: DEPMAP_PACKAGE)
-                   graph is everything it (transitively) requires
+  DEPMAP_ROOT      space-separated findlib libraries to root   (default: all of DEPMAP_PACKAGE's
+                   the graph at; the graph is everything they   libraries, i.e. DEPMAP_PACKAGE
+                   (transitively) require                       and DEPMAP_PACKAGE.*)
 
 Requires: opam, ocamlfind, and the package installed in the switch (`opam install`,
 or `opam pin` a local checkout). Set OPAMSWITCH to analyse another switch.
@@ -47,17 +48,27 @@ def own_packages():
 NAME = os.environ.get("DEPMAP_NAME") or PACKAGE
 OWN_RE = re.compile(os.environ.get("DEPMAP_OWN")
                     or r"^(" + "|".join(re.escape(p) for p in own_packages()) + r")([.]|$)")
-ROOT_LIB = os.environ.get("DEPMAP_ROOT", PACKAGE)
 own = lambda n: bool(OWN_RE.match(n))
 
-# --- 1. library graph: findlib `requires` closure of the root ---------------
+# Dune requires a package's public library names to be the package name or
+# start with `<package>.`, so this finds all the libraries it installs.
+def package_libraries():
+    names = (l.split()[0] for l in sh(["ocamlfind", "list"]).splitlines() if l.strip())
+    return sorted(n for n in names if n == PACKAGE or n.startswith(PACKAGE + "."))
+
+ROOT_LIBS = os.environ.get("DEPMAP_ROOT", "").split() or package_libraries()
+
+# --- 1. library graph: findlib `requires` closure of the roots --------------
 def requires(pkg):
     out = sh(["ocamlfind", "query", "-format", "%(requires)", pkg])
     return out.split() if out else []
 
-if not sh(["ocamlfind", "query", ROOT_LIB]):
-    sys.exit(f"findlib library {ROOT_LIB!r} not found -- set DEPMAP_ROOT to one of {PACKAGE}'s libraries")
-nodes, edges, worklist = set(), [], [ROOT_LIB]
+if not ROOT_LIBS:
+    sys.exit(f"no findlib library found for {PACKAGE!r} -- set DEPMAP_ROOT to the libraries to map")
+for r in ROOT_LIBS:
+    if not sh(["ocamlfind", "query", r]):
+        sys.exit(f"findlib library {r!r} not found")
+nodes, edges, worklist = set(), [], list(ROOT_LIBS)
 while worklist:
     pkg = worklist.pop()
     if pkg in nodes:
@@ -91,9 +102,11 @@ for rp, pkgs in by_dir.items():
         self_size[p] = artifact_bytes(rp) if p == owner else 0
 
 # --- 3. emit ------------------------------------------------------------------
+# Entry points: the roots nothing else in the graph requires.
+required = {b for _, b in edges}
 out = {
     "project": NAME,
-    "root": ROOT_LIB,
+    "roots": [r for r in ROOT_LIBS if r not in required],
     "nodes": [{"id": n, "kind": "own" if own(n) else "external", "self": self_size.get(n, 0)}
               for n in sorted(nodes)],
     "edges": sorted(set((a, b) for a, b in edges)),
