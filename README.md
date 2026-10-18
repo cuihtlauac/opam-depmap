@@ -24,48 +24,58 @@ frameworks, no build step, no server, no source checkout.
 
 ## Requirements
 
-- `ocamlfind`, `opam`, `python3` (3.8+), and a browser to view the output
-- The package to analyse must be **installed** in the current opam switch
+- OCaml ≥ 4.14, dune, and the opam libraries (`opam-state`, `opam-format`,
+  `opam-core`), `ocamlfind`, `cmdliner`; a browser to view the output
+- The package to analyse must be **installed** in the opam switch
   (`opam install <pkg>`, or `opam pin` a local checkout to map your own work).
-  Set `OPAMSWITCH` to use another switch.
+
+## Install
+
+opam-depmap is an **opam plugin**:
+
+```sh
+git clone https://github.com/cuihtlauac/opam-depmap
+opam pin add opam-depmap ./opam-depmap
+```
+
+Plugins are available from every switch, as `opam depmap`.
 
 ## Usage
 
 ```sh
-git clone https://github.com/cuihtlauac/opam-depmap
-cd opam-depmap
-
-# Point it at any installed opam package:
-make PACKAGE=dream
-# -> out/data.json  out/squarified_treemap.html
+opam depmap dream                       # -> squarified_treemap.html
+opam depmap dream -o dream.html --data dream.json
+opam depmap collect dream -o data.json  # just the data
+opam depmap render data.json -o map.html  # just the page (no opam needed)
 ```
 
-Every stage leaves its output in `out/`: the collected data (`data.json`) and
-the page. Re-running `make` recomputes the data but only rewrites it when its
-content changed, so the page is rebuilt only when something actually moved.
-
-Open the HTML file in a browser (it is fully self-contained — copy it
-anywhere). Or run the stages by hand:
+`opam depmap PKG` is short for `opam depmap map PKG`. Without installing, run
+it from the checkout with `dune exec -- opam-depmap …`, or with the Makefile:
 
 ```sh
-# 1. collect the graph + sizes from the opam switch
-DEPMAP_PACKAGE=dream DEPMAP_OUT=/tmp/data.json opam exec -- python3 bin/collect.py
-
-# 2. render (pure python, no opam needed)
-DEPMAP_DATA=/tmp/data.json DEPMAP_HTML=/tmp/map.html python3 bin/build_map.py
+make PACKAGE=dream          # -> out/data.json  out/squarified_treemap.html
 ```
 
-### Configuration
+Outputs are only rewritten when their content changes.
 
-`collect.py` is configured via environment variables:
+Open the HTML file in a browser (it is fully self-contained — copy it anywhere).
 
-| variable | meaning | default |
+### Options
+
+| option | meaning | default |
 |---|---|---|
-| `DEPMAP_PACKAGE` | installed opam package to analyse | *(required)* |
-| `DEPMAP_NAME` | display name | `DEPMAP_PACKAGE` |
-| `DEPMAP_OWN` | regex matching the project's **own** libraries | `^(<own packages>)([.]\|$)`, own packages = installed packages sharing `DEPMAP_PACKAGE`'s `dev-repo` |
-| `DEPMAP_ROOT` | space-separated findlib libraries to root the graph at; the graph is what they transitively require | all of the package's libraries (`<pkg>`, `<pkg>.*`) |
-| `DEPMAP_OUT` | output JSON path | `./data.json` |
+| `PACKAGE` | installed opam package to analyse | *(required)* |
+| `--name NAME` | display name | `PACKAGE` |
+| `--own PKG` | opam package whose libraries are the project's **own** (repeatable) | installed packages sharing `PACKAGE`'s `dev-repo` |
+| `--entry LIB` | findlib library to root the graph at (repeatable); the graph is what they transitively require | every findlib library `PACKAGE` installs |
+| `--switch SW` | opam switch to read (also `OPAMSWITCH`) | the current switch |
+| `-o FILE` | output file | `squarified_treemap.html` / `data.json` |
+
+### As a library
+
+The `opam-depmap` library exposes the pipeline as `Opam_depmap.Collect`
+(graph + sizes, over the switch or any `Collect.source`), `Opam_depmap.Graph`
+(the `data.json` model) and `Opam_depmap.Render` (the HTML page).
 
 ## Example
 
@@ -75,20 +85,24 @@ A worked example for [Dream](https://github.com/aantron/dream) is committed unde
 ## How it works
 
 ```
-opam switch: ocamlfind (requires closure & install dirs) + opam (dev-repo)
+opam switch: opam-state (installed packages, dev-repo, .changes file lists)
+           + findlib    (requires closure & install dirs)
         │
-        ▼   bin/collect.py
+        ▼   Opam_depmap.Collect          (opam depmap collect)
    data.json  { project, roots, nodes:[{id, kind: own|external, self}], edges }
         │
-        ▼   bin/build_map.py
+        ▼   Opam_depmap.Render           (opam depmap render)
    squarified_treemap.html
 ```
 
 - **Graph:** the findlib `requires` closure of the package's libraries —
   exactly what linking them pulls in (build-only tools and test deps never appear).
-- **Own vs external:** a library is *own* if it belongs to an opam package built
-  from the same source repo (`dev-repo`) as the analysed package; everything else
-  reachable is *external*.
+- **Which package installed a library:** read from opam's own record of the
+  files each package installed (`.opam-switch/install/<pkg>.changes`): the
+  owner of the library's `META` file (or, failing that, of its directory).
+- **Own vs external:** a library is *own* if an opam package built from the
+  same source repo (`dev-repo`) as the analysed package installed it;
+  everything else reachable is *external*.
 - **Sizes** are compiled-artifact bytes of each library's findlib install dir,
   measured the same way for own and external libs. This is a consistent
   **proxy**, not opam/install size.
@@ -97,6 +111,18 @@ opam switch: ocamlfind (requires closure & install dirs) + opam (dev-repo)
 - The treemap is **squarified** (Bruls–Huizing–van Wijk); the nesting/ordering
   uses a **dominator tree** and a Sugiyama-style within-band ordering. See
   `CLAUDE.md` for internals.
+
+## Testing
+
+```sh
+make test      # unit tests (alcotest)
+make oracle    # differential test against the original Python implementation
+```
+
+The original Python implementation is kept in `test/oracle/` as an oracle: for
+16 installed packages (`test/oracle/packages`), it and opam-depmap must
+produce byte-identical `data.json` and HTML, apart from differences listed and
+justified in `test/oracle/expected_diffs`.
 
 ## Recording the layout video
 

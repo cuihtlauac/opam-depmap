@@ -1,0 +1,17 @@
+# opam packages compared against the Python oracle (all must be installed)
+dream
+lwt
+cohttp-lwt-unix
+caqti-lwt
+h2-lwt-unix
+mirage-crypto-pk
+x509
+ctypes-foreign
+menhirLib
+ppxlib
+base
+opam-state
+utop
+tyxml
+zarith
+cmdliner

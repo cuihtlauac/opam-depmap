@@ -1,50 +1,38 @@
-# opam-depmap -- generate the dependency map for an installed opam package.
+# opam-depmap -- thin wrapper around dune.
 #
+#   make                                     # build
 #   make PACKAGE=<opam package>              # -> out/{data.json,squarified_treemap.html}
 #   make example                             # regenerate the bundled Dream example
-#
-# Every stage writes a file:
-#
-#   collect.py -> $(OUT)/data.json -> build_map.py -> $(OUT)/squarified_treemap.html
-#
-# The opam switch lives outside make's view, so data.json is recomputed on every
-# run but only rewritten when its content changes; the page is rebuilt only when
-# data.json (or its generator) actually changed.
+#   make test                                # unit tests
+#   make oracle                              # compare with the Python oracle on 16 packages
 #
 # The package must be installed in the current opam switch (set OPAMSWITCH to use another).
 
 PACKAGE ?=
 OUT     ?= out
-PYTHON  ?= python3
 HERE    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-O       := $(abspath $(OUT))
+DEPMAP  := dune exec --root $(HERE) --no-print-directory -- opam-depmap
 
-# Move $1.tmp over $1 only if it differs, so unchanged outputs keep their mtime.
-update = if cmp -s $1.tmp $1; then rm -f $1.tmp; else mv $1.tmp $1; fi
+.PHONY: all build map test oracle example clean
+all: $(if $(PACKAGE),map,build)
 
-.PHONY: all collect map clean example FORCE
-all: $(O)/squarified_treemap.html
-	@echo "open $(O)/squarified_treemap.html"
+build:
+	dune build --root $(HERE)
 
-collect: $(O)/data.json
-map:     $(O)/squarified_treemap.html
+map:
+	@mkdir -p $(OUT)
+	$(DEPMAP) map $(PACKAGE) --data $(abspath $(OUT))/data.json -o $(abspath $(OUT))/squarified_treemap.html
 
-$(O):
-	mkdir -p $@
+test:
+	dune test --root $(HERE)
 
-$(O)/data.json: $(HERE)/bin/collect.py FORCE | $(O)
-	@test -n "$(PACKAGE)" || { echo "usage: make PACKAGE=<installed opam package>" >&2; exit 1; }
-	DEPMAP_PACKAGE=$(PACKAGE) DEPMAP_OUT=$@.tmp opam exec -- $(PYTHON) $(HERE)/bin/collect.py
-	@$(call update,$@)
-
-$(O)/squarified_treemap.html: $(O)/data.json $(HERE)/bin/build_map.py
-	DEPMAP_DATA=$< DEPMAP_HTML=$@ $(PYTHON) $(HERE)/bin/build_map.py
+oracle:
+	dune build --root $(HERE) @oracle
 
 # Regenerate the committed example (needs dream installed: opam install dream)
 example:
-	$(MAKE) -f $(HERE)/Makefile PACKAGE=dream OUT=$(HERE)/example/dream
+	$(MAKE) -f $(HERE)/Makefile PACKAGE=dream OUT=$(HERE)/example/dream map
 
 clean:
-	rm -rf $(O) $(HERE)/bin/__pycache__
-
-FORCE:
+	dune clean --root $(HERE)
+	rm -rf $(OUT)
