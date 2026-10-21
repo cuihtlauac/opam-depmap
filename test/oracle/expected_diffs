@@ -1,3 +1,0 @@
-# PKG FIELD ±ITEM  # reason
-# Differences between the oracle and opam-depmap that are improvements, not bugs.
-# Only `roots` and `kind` may appear here: graph and sizes must always match.

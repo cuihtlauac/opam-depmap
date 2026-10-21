@@ -1,0 +1,224 @@
+{
+ "project": "demo",
+ "units": "bytes",
+ "metric_notes": {
+  "self": "own compiled-artifact bytes (a proxy, not install size)",
+  "transitive": "self plus the self of every library reachable via `requires`",
+  "depth": "longest path from an entry (a root nothing requires) down to this node",
+  "fan_in": "number of libraries that directly require this one",
+  "fan_out": "number of libraries this one directly requires",
+  "requires": "direct findlib dependencies (the `succ` adjacency)"
+ },
+ "summary": {
+  "nodes_total": 7,
+  "nodes_sized": 5,
+  "edges": 5,
+  "roots": 2,
+  "own": 2,
+  "external": 5,
+  "total_self_bytes": 3642496,
+  "median_bytes": 524288,
+  "p90_bytes": 2000000,
+  "p95_bytes": 2000000,
+  "p99_bytes": 2000000,
+  "gini": 0.546,
+  "top5_share": 1.0
+ },
+ "roots": [
+  "demo",
+  "demo.extra"
+ ],
+ "top_by_self": [
+  {
+   "id": "tool",
+   "self": 2000000,
+   "kind": "external"
+  },
+  {
+   "id": "base",
+   "self": 1048576,
+   "kind": "external"
+  },
+  {
+   "id": "stdlib",
+   "self": 524288,
+   "kind": "external"
+  },
+  {
+   "id": "fmt",
+   "self": 65536,
+   "kind": "external"
+  },
+  {
+   "id": "demo",
+   "self": 4096,
+   "kind": "own"
+  },
+  {
+   "id": "demo.extra",
+   "self": 0,
+   "kind": "own"
+  },
+  {
+   "id": "iso",
+   "self": 0,
+   "kind": "external"
+  }
+ ],
+ "top_by_transitive": [
+  {
+   "id": "tool",
+   "transitive": 2000000,
+   "self": 2000000
+  },
+  {
+   "id": "demo",
+   "transitive": 1642496,
+   "self": 4096
+  },
+  {
+   "id": "base",
+   "transitive": 1572864,
+   "self": 1048576
+  },
+  {
+   "id": "demo.extra",
+   "transitive": 589824,
+   "self": 0
+  },
+  {
+   "id": "fmt",
+   "transitive": 589824,
+   "self": 65536
+  },
+  {
+   "id": "stdlib",
+   "transitive": 524288,
+   "self": 524288
+  },
+  {
+   "id": "iso",
+   "transitive": 0,
+   "self": 0
+  }
+ ],
+ "top_by_fan_in": [
+  {
+   "id": "fmt",
+   "fan_in": 2
+  },
+  {
+   "id": "stdlib",
+   "fan_in": 2
+  },
+  {
+   "id": "base",
+   "fan_in": 1
+  },
+  {
+   "id": "demo",
+   "fan_in": 0
+  },
+  {
+   "id": "demo.extra",
+   "fan_in": 0
+  },
+  {
+   "id": "iso",
+   "fan_in": 0
+  },
+  {
+   "id": "tool",
+   "fan_in": 0
+  }
+ ],
+ "longest_chain": {
+  "depth": 2,
+  "path": [
+   "demo",
+   "base",
+   "stdlib"
+  ]
+ },
+ "nodes": [
+  {
+   "id": "base",
+   "kind": "external",
+   "self": 1048576,
+   "transitive": 1572864,
+   "depth": 1,
+   "fan_in": 1,
+   "fan_out": 1,
+   "requires": [
+    "stdlib"
+   ]
+  },
+  {
+   "id": "demo",
+   "kind": "own",
+   "self": 4096,
+   "transitive": 1642496,
+   "depth": 0,
+   "fan_in": 0,
+   "fan_out": 2,
+   "requires": [
+    "base",
+    "fmt"
+   ]
+  },
+  {
+   "id": "demo.extra",
+   "kind": "own",
+   "self": 0,
+   "transitive": 589824,
+   "depth": 0,
+   "fan_in": 0,
+   "fan_out": 1,
+   "requires": [
+    "fmt"
+   ]
+  },
+  {
+   "id": "fmt",
+   "kind": "external",
+   "self": 65536,
+   "transitive": 589824,
+   "depth": 1,
+   "fan_in": 2,
+   "fan_out": 1,
+   "requires": [
+    "stdlib"
+   ]
+  },
+  {
+   "id": "iso",
+   "kind": "external",
+   "self": 0,
+   "transitive": 0,
+   "depth": 0,
+   "fan_in": 0,
+   "fan_out": 0,
+   "requires": []
+  },
+  {
+   "id": "stdlib",
+   "kind": "external",
+   "self": 524288,
+   "transitive": 524288,
+   "depth": 2,
+   "fan_in": 2,
+   "fan_out": 0,
+   "requires": []
+  },
+  {
+   "id": "tool",
+   "kind": "external",
+   "self": 2000000,
+   "transitive": 2000000,
+   "depth": 0,
+   "fan_in": 0,
+   "fan_out": 0,
+   "requires": []
+  }
+ ]
+}

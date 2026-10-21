@@ -1,0 +1,67 @@
+{
+ "project": "demo",
+ "roots": [
+  "demo",
+  "demo.extra"
+ ],
+ "nodes": [
+  {
+   "id": "base",
+   "kind": "external",
+   "self": 1048576
+  },
+  {
+   "id": "demo",
+   "kind": "own",
+   "self": 4096
+  },
+  {
+   "id": "demo.extra",
+   "kind": "own",
+   "self": 0
+  },
+  {
+   "id": "fmt",
+   "kind": "external",
+   "self": 65536
+  },
+  {
+   "id": "iso",
+   "kind": "external",
+   "self": 0
+  },
+  {
+   "id": "stdlib",
+   "kind": "external",
+   "self": 524288
+  },
+  {
+   "id": "tool",
+   "kind": "external",
+   "self": 2000000
+  }
+ ],
+ "edges": [
+  [
+   "base",
+   "stdlib"
+  ],
+  [
+   "demo",
+   "base"
+  ],
+  [
+   "demo",
+   "fmt"
+  ],
+  [
+   "demo.extra",
+   "fmt"
+  ],
+  [
+   "fmt",
+   "stdlib"
+  ]
+ ],
+ "subtitle": "A <b>demo</b> fixture switch. Hover to explore the blocks."
+}

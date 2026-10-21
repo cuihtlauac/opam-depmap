@@ -88,3 +88,38 @@ let owner t path =
         | None -> up (Filename.dirname rel)
     in
     up (String.sub path n (String.length path - n))
+
+(* Each manifest entry is [ "<path>" {"<desc>"} ]; a file's desc is
+   [F:S<bytes>T<mtime>]; we sum the recorded S sizes under bin/, sbin/, stublibs/. *)
+let entry_re = Str.regexp "\"\\([^\"]+\\)\"[ \t\r\n]*{\"\\([^\"}]*\\)\"}"
+let fsize_re = Str.regexp "F:S\\([0-9]+\\)"
+
+let read_file f = try In_channel.with_open_bin f In_channel.input_all with Sys_error _ -> ""
+
+let library_less t =
+  let install = Filename.concat t.prefix ".opam-switch/install" in
+  let top_of path = match String.index_opt path '/' with Some i -> String.sub path 0 i | None -> path in
+  let is_meta path =
+    String.length path > 4 && String.sub path 0 4 = "lib/" && Filename.check_suffix path "/META"
+  in
+  let scan fname =
+    let pkg = Filename.chop_suffix fname ".changes" in
+    let text = read_file (Filename.concat install fname) in
+    let has_meta = ref false and size = ref 0 and pos = ref 0 in
+    (try
+       while true do
+         let i = Str.search_forward entry_re text !pos in
+         pos := i + String.length (Str.matched_string text);
+         let path = Str.matched_group 1 text and desc = Str.matched_group 2 text in
+         if is_meta path then has_meta := true;
+         if (match top_of path with "bin" | "sbin" | "stublibs" -> true | _ -> false)
+            && Str.string_match fsize_re desc 0
+         then size := !size + int_of_string (Str.matched_group 1 desc)
+       done
+     with Not_found -> ());
+    if !has_meta then None else Some (pkg, !size)
+  in
+  (try Sys.readdir install |> Array.to_list with Sys_error _ -> [])
+  |> List.filter (fun f -> Filename.check_suffix f ".changes")
+  |> List.sort String.compare
+  |> List.filter_map scan

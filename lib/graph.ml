@@ -7,20 +7,21 @@ type t = {
   roots : string list;
   nodes : node list;
   edges : (string * string) list;
+  subtitle : string option;
 }
 
 let make ~project ~roots ~nodes ~edges =
   let nodes = List.sort (fun a b -> String.compare a.id b.id) nodes in
-  { project; roots; nodes; edges = List.sort_uniq compare edges }
+  { project; roots; nodes; edges = List.sort_uniq compare edges; subtitle = None }
 
 let string_of_kind = function Own -> "own" | External -> "external"
 
-(* --- printing: byte-compatible with Python's json.dumps ------------------- *)
+(* --- printing: the canonical data.json JSON (one-space indent, or minified) - *)
 
-type json = Str of string | Int of int | Arr of json list | Obj of (string * json) list
+type json = Str of string | Int of int | Raw of string | Arr of json list | Obj of (string * json) list
 
 let to_json g =
-  Obj
+  let fields =
     [ ("project", Str g.project);
       ("roots", Arr (List.map (fun r -> Str r) g.roots));
       ( "nodes",
@@ -33,9 +34,12 @@ let to_json g =
                    ("self", Int n.self) ])
              g.nodes) );
       ("edges", Arr (List.map (fun (a, b) -> Arr [ Str a; Str b ]) g.edges)) ]
+  in
+  (* subtitle is emitted last (after edges), only when present. *)
+  Obj (match g.subtitle with None -> fields | Some s -> fields @ [ ("subtitle", Str s) ])
 
-(* json.dumps defaults to ensure_ascii: escape controls and non-ASCII bytes.
-   Library names are ASCII; non-ASCII bytes are escaped one by one. *)
+(* ensure_ascii-style: escape controls and non-ASCII bytes as \uXXXX. Library
+   names are ASCII; non-ASCII bytes (if any) are escaped one by one. *)
 let quote b s =
   Buffer.add_char b '"';
   String.iter
@@ -52,11 +56,12 @@ let quote b s =
     s;
   Buffer.add_char b '"'
 
-let to_string ?(minify = false) g =
+let json_to_string ?(minify = false) j =
   let b = Buffer.create 4096 in
   let rec go indent = function
     | Str s -> quote b s
     | Int i -> Buffer.add_string b (string_of_int i)
+    | Raw s -> Buffer.add_string b s
     | Arr [] -> Buffer.add_string b "[]"
     | Obj [] -> Buffer.add_string b "{}"
     | Arr l -> seq indent '[' ']' (fun i v -> go i v) l
@@ -81,8 +86,10 @@ let to_string ?(minify = false) g =
     nl indent;
     Buffer.add_char b cl
   in
-  go 0 (to_json g);
+  go 0 j;
   Buffer.contents b
+
+let to_string ?minify g = json_to_string ?minify (to_json g)
 
 (* --- parsing ---------------------------------------------------------------- *)
 
@@ -135,6 +142,11 @@ let of_string s =
       let* roots = Result.bind (field o "roots") (list str) in
       let* nodes = Result.bind (field o "nodes") (list node) in
       let* edges = Result.bind (field o "edges") (list edge) in
-      Ok { project; roots; nodes; edges }
+      let* subtitle =
+        match List.assoc_opt "subtitle" o with
+        | None -> Ok None
+        | Some v -> Result.map Option.some (str v)
+      in
+      Ok { project; roots; nodes; edges; subtitle }
   | Some _ -> Error "expected a JSON object"
   | None -> Error "invalid JSON"

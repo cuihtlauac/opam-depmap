@@ -33,3 +33,11 @@ val artifact_bytes : string -> int
 
 val of_switch : ?switch:string -> options -> (Graph.t, string) result
 (** {!run} on the given (default: current) opam switch. Requires {!Switch.init}. *)
+
+val of_switch_all : ?switch:string -> ?name:string -> unit -> (Graph.t, string) result
+(** Map the whole switch at once: nodes are every findlib library (edges from
+    [requires], restricted to libraries in the switch) plus every library-less
+    installed package ({!Switch.library_less}) as an isolated, binary-footprint-
+    sized node. [roots] and the {!Graph.Own} layer are the root libraries
+    (nothing else in the switch requires them); library-less packages are never
+    own. [name] defaults to the switch name. Requires {!Switch.init}. *)

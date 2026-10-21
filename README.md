@@ -47,13 +47,25 @@ opam depmap dream                       # -> squarified_treemap.html
 opam depmap dream -o dream.html --data dream.json
 opam depmap collect dream -o data.json  # just the data
 opam depmap render data.json -o map.html  # just the page (no opam needed)
+opam depmap switch                      # map the whole current switch at once
+opam depmap report data.json -o report.json  # model-oriented metrics (JSON)
+opam depmap report data.json -o report.md    # the same, as a compact digest
 ```
 
-`opam depmap PKG` is short for `opam depmap map PKG`. Without installing, run
-it from the checkout with `dune exec -- opam-depmap …`, or with the Makefile:
+`opam depmap PKG` is short for `opam depmap map PKG`. Besides the interactive
+page, `report` emits a **model-oriented** view of the same `data.json`: the
+magnitudes the page shows visually (depth, transitive footprint, fan-in, the
+size distribution) written out as explicit numbers — an enriched JSON, or a
+compact Markdown digest when the output ends in `.md`.
+
+Without installing, run it from the checkout with `dune exec -- opam-depmap …`,
+or with the Makefile:
 
 ```sh
 make PACKAGE=dream          # -> out/data.json  out/squarified_treemap.html
+make switch                 # the whole current switch
+make report PACKAGE=dream   # -> out/report.json
+make digest PACKAGE=dream   # -> out/report.md
 ```
 
 Outputs are only rewritten when their content changes.
@@ -69,13 +81,18 @@ Open the HTML file in a browser (it is fully self-contained — copy it anywhere
 | `--own PKG` | opam package whose libraries are the project's **own** (repeatable) | installed packages sharing `PACKAGE`'s `dev-repo` |
 | `--entry LIB` | findlib library to root the graph at (repeatable); the graph is what they transitively require | every findlib library `PACKAGE` installs |
 | `--switch SW` | opam switch to read (also `OPAMSWITCH`) | the current switch |
-| `-o FILE` | output file | `squarified_treemap.html` / `data.json` |
+| `--top N` | entries per ranked list / digest table (`report`) | `15` |
+| `-o FILE` | output file | `squarified_treemap.html` / `data.json` / `report.json` |
+
+The `switch` subcommand takes no `PACKAGE` (it maps every findlib library in
+the switch, plus each library-less package as an isolated, size-weighted block).
 
 ### As a library
 
 The `opam-depmap` library exposes the pipeline as `Opam_depmap.Collect`
 (graph + sizes, over the switch or any `Collect.source`), `Opam_depmap.Graph`
-(the `data.json` model) and `Opam_depmap.Render` (the HTML page).
+(the `data.json` model and its JSON printer), `Opam_depmap.Render` (the HTML
+page) and `Opam_depmap.Report` (the model-oriented JSON / Markdown metrics).
 
 ## Example
 
@@ -91,8 +108,8 @@ opam switch: opam-state (installed packages, dev-repo, .changes file lists)
         ▼   Opam_depmap.Collect          (opam depmap collect)
    data.json  { project, roots, nodes:[{id, kind: own|external, self}], edges }
         │
-        ▼   Opam_depmap.Render           (opam depmap render)
-   squarified_treemap.html
+        ▼   Opam_depmap.Render           (opam depmap render)   Opam_depmap.Report (opam depmap report)
+   squarified_treemap.html  (human)                        report.{json,md}   (model)
 ```
 
 - **Graph:** the findlib `requires` closure of the package's libraries —
@@ -115,30 +132,27 @@ opam switch: opam-state (installed packages, dev-repo, .changes file lists)
 ## Testing
 
 ```sh
-make test      # unit tests (alcotest)
-make oracle    # differential test against the original Python implementation
+make test      # unit tests (alcotest), including golden render/report checks
 ```
 
-The original Python implementation is kept in `test/oracle/` as an oracle: for
-16 installed packages (`test/oracle/packages`), it and opam-depmap must
-produce byte-identical `data.json` and HTML, apart from differences listed and
-justified in `test/oracle/expected_diffs`.
+`Render` and `Report` are pure functions of `data.json`, so their output is
+pinned **byte-for-byte** by committed fixtures in `test/golden/` and by the
+`example/dream` page. `Collect` is covered by unit tests over a fake switch.
+(During the port from the original Python implementation, every stage was also
+checked byte-identical against it as a differential oracle; that scaffolding was
+removed once parity held.)
 
 ## Recording the layout video
 
 The GIF above is produced by screenshotting each layout and cross-fading them:
 
 ```sh
-# capture the four settled layouts
+# capture the four settled layouts: inject a script that clicks the layout
+# button once the page has settled, screenshot, repeat.
 for L in Bands Spatial Strip Fan-in; do
-  python3 - "$L" <<'PY'
-import sys, pathlib
-h = pathlib.Path("out/squarified_treemap.html").read_text()
-clk = f"[...document.querySelectorAll('.schemebtn')].find(b=>b.textContent==='{sys.argv[1]}')?.click()"
-h = h.replace("</body>", f"<script>addEventListener('load',()=>setTimeout(()=>{clk},400))</script></body>")
-pathlib.Path("/tmp/cap.html").write_text(h)
-PY
-  google-chrome --headless --disable-gpu --virtual-time-budget=1600 \
+  sed "s#</body>#<script>addEventListener('load',()=>setTimeout(()=>[...document.querySelectorAll('.schemebtn')].find(b=>b.textContent==='$L')?.click(),400))</script></body>#" \
+    out/squarified_treemap.html > /tmp/cap.html
+  google-chrome --headless=new --disable-gpu --virtual-time-budget=1600 \
     --window-size=1280,820 --screenshot="/tmp/$L.png" "file:///tmp/cap.html"
 done
 

@@ -1,32 +1,8 @@
-#!/usr/bin/env python3
-"""Inline depgraph/data.json into a self-contained squarified_treemap.html.
-
-Model:
-  * Rectangle  <-> a block of binary (own compiled-artifact bytes). This covers
-    EVERY compiled library -- external deps AND Dream's own libraries that emit
-    code. So the rectangulation is the complete binary footprint.
-  * Dot        <-> a Dream findlib library (an authored library / entry point).
-  * A Dream library that emits code appears as BOTH: a dot (identity) and a
-    rectangle (its binary), joined by a dotted "produces" link.
-
-Dependency edges are anchored at the library's representative glyph: Dream libs
-at their dot, externals at their rectangle. So edges are dot->dot (Dream
-internal), dot->rect (pulls in a block), rect->rect (external->external); there
-are no rectangle->dot dependency edges. All layout runs in the browser.
-"""
-import json, os
-from pathlib import Path
-
-DATA = Path(os.environ.get("DEPMAP_DATA", "data.json")).resolve()
-OUT = Path(os.environ.get("DEPMAP_HTML", "squarified_treemap.html")).resolve()
-data = json.loads(DATA.read_text())
-PROJECT = data.get("project") or "project"
-
-HTML = r"""<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Dream dependency map</title>
+<title>demo dependency map</title>
 <style>
   :root { font-family: ui-sans-serif, system-ui, sans-serif; }
   html, body { height: 100%; }
@@ -100,12 +76,8 @@ HTML = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>Dream &mdash; binary blocks &amp; the libraries that produce / pull them in</h1>
-  <div class="sub">The rectangulation is the <b>complete binary footprint</b>: one rectangle per
-  compiled library, area &prop; own bytes, coloured by depth. Dream's findlib libraries are
-  <b>dots above</b>; a Dream lib that emits code also owns a rectangle (its name <u>underlined</u>),
-  joined by a dotted produces link. <b>Hover</b> to trace a library's binary and everything it pulls
-  in.</div>
+  <h1>demo &mdash; binary blocks &amp; the libraries that produce / pull them in</h1>
+  <div class="sub">A <b>demo</b> fixture switch. Hover to explore the blocks.</div>
   <div class="stats" id="statline"></div>
 </header>
 <div id="legend"></div>
@@ -113,7 +85,7 @@ HTML = r"""<!doctype html>
 <div id="tip"></div>
 <footer id="method"></footer>
 <script>
-const DATA = __DATA__;
+const DATA = {"project":"demo","roots":["demo","demo.extra"],"nodes":[{"id":"base","kind":"external","self":1048576},{"id":"demo","kind":"own","self":4096},{"id":"demo.extra","kind":"own","self":0},{"id":"fmt","kind":"external","self":65536},{"id":"iso","kind":"external","self":0},{"id":"stdlib","kind":"external","self":524288},{"id":"tool","kind":"external","self":2000000}],"edges":[["base","stdlib"],["demo","base"],["demo","fmt"],["demo.extra","fmt"],["fmt","stdlib"]],"subtitle":"A <b>demo</b> fixture switch. Hover to explore the blocks."};
 const SELF = new Map(), KIND = new Map();
 for (const n of DATA.nodes) { SELF.set(n.id, n.self); KIND.set(n.id, n.kind); }
 const ids = DATA.nodes.map(n => n.id);
@@ -143,7 +115,7 @@ const finOrd = new Map(RECTS.map(i => [i, maxCons - (pred.get(i) || []).length])
 const finMax = Math.max(1, ...RECTS.map(i => finOrd.get(i)));
 let ORD = level, ORDMAX = maxLevel;   // active layout ordering (depth, or fan-in)
 
-// ---- Dream-internal layering for the dot zone ------------------------------
+// ---- demo-internal layering for the dot zone ------------------------------
 const dsucc = new Map(DREAM.map(d => [d, (succ.get(d) || []).filter(x => isDot.get(x))]));
 const dlayer = new Map();
 (function () { function DL(n) { if (dlayer.has(n)) return dlayer.get(n); dlayer.set(n, 0); const ds = dsucc.get(n) || []; const v = ds.length ? Math.max(...ds.map(DL)) + 1 : 0; dlayer.set(n, v); return v; } DREAM.forEach(DL); })();
@@ -353,7 +325,7 @@ function highlight(id) {
     if ((a === id || down.has(a)) && down.has(b)) pathC(depC(a), depC(b), dep, 0.85, 1.3, dash);
     else if ((b === id || up.has(b)) && up.has(a)) pathC(depC(a), depC(b), con, 0.85, 1.3, dash);
   }
-  // produces links for highlighted Dream-with-code (bright for the hovered one)
+  // produces links for highlighted demo-with-code (bright for the hovered one)
   for (const d of DREAM_CODE) if (keep.has(d)) pathC(dotGeom.get(d), rectGeom.get(d), gold, d === id ? 0.95 : 0.5, d === id ? 2 : 1.2, "2 3");
 }
 function clear() { for (const el of wrap.querySelectorAll(".cell,.dot")) el.classList.remove("dim", "hl", "dhl"); tip.style.display = "none"; drawBase(); }
@@ -364,7 +336,7 @@ function moveTip(id, e) {
   let body;
   if (isDot.get(id)) {
     const own = SELF.get(id);
-    body = `<b>${id}</b> <span class="k">(Dream library${hasRect.has(id) ? " + binary block" : ""})</span><br>`
+    body = `<b>${id}</b> <span class="k">(demo library${hasRect.has(id) ? " + binary block" : ""})</span><br>`
       + (hasRect.has(id) ? `<span class="own">own code:</span> ${fmt(own)}<br>` : `<span class="k">no own binary</span><br>`)
       + `<span class="dep">pulls in:</span> ${blocks.length} blocks (${fmt(bbytes)})<br>`
       + `<span class="k">total footprint:</span> ${fmt(own + bbytes)}`;
@@ -373,7 +345,7 @@ function moveTip(id, e) {
     body = `<b>${id}</b> <span class="k">(binary block, ${METRIC_SHORT}=${metricBase.get(id)})</span><br>`
       + `<span class="k">own code:</span> ${fmt(SELF.get(id))}<br>`
       + `<span class="dep">needs:</span> ${(succ.get(id)||[]).length} direct, ${blocks.length} transitive (${fmt(bbytes)})<br>`
-      + `<span class="con">pulled in by:</span> ${upDots.length} Dream libs`;
+      + `<span class="con">pulled in by:</span> ${upDots.length} demo libs`;
   }
   tip.innerHTML = body; tip.style.display = "block";
   tip.style.left = Math.min(e.clientX + 14, innerWidth - 320) + "px";
@@ -390,7 +362,7 @@ function buildLegend() {
   gb.innerHTML = `${GLAB[0]}<span class="gbar" style="background:linear-gradient(to right,${grad})"></span>${GLAB[1]}`;
   legend.appendChild(gb);
   const key = document.createElement("span"); key.style.marginLeft = "10px";
-  key.innerHTML = `&#9679; Dream lib &nbsp; <u>abc</u> Dream binary &nbsp; &middot;&middot;&middot; produces`;
+  key.innerHTML = `&#9679; demo lib &nbsp; <u>abc</u> demo binary &nbsp; &middot;&middot;&middot; produces`;
   legend.appendChild(key);
   const ll = document.createElement("span"); ll.className = "ctrllabel"; ll.style.marginLeft = "10px"; ll.textContent = "Layout:"; legend.appendChild(ll);
   for (const [k, label] of [["bands", "Bands"], ["spatial", "Spatial"], ["strip", "Strip"], ["fanin", "Fan-in"]]) {
@@ -422,9 +394,9 @@ function buildLegend() {
 })();
 
 document.getElementById("method").innerHTML =
-  "<b>Method.</b> <b>Rectangles = every binary block</b> (external libraries and Dream's own "
+  "<b>Method.</b> <b>Rectangles = every binary block</b> (external libraries and demo's own "
   + "compiled libraries), area &prop; own compiled-artifact bytes (12&nbsp;KiB floor), squarified, "
-  + "coloured by depth. <b>Dots = Dream findlib libraries.</b> A Dream library that emits code is "
+  + "coloured by depth. <b>Dots = demo findlib libraries.</b> A demo library that emits code is "
   + "both a dot and a rectangle (its name <u>underlined</u>), tied by a dotted produces "
   + "link; libraries with no compiled code of their own are dots only. A dependency anchors at the "
   + "<b>binary</b> when the "
@@ -450,8 +422,3 @@ addEventListener("resize", () => build(false));
 </script>
 </body>
 </html>
-"""
-
-out = HTML.replace("__DATA__", json.dumps(data, separators=(",", ":"))).replace("Dream", PROJECT)
-OUT.write_text(out)
-print("wrote %s  (%d bytes)" % (OUT, len(out)))

@@ -31,6 +31,13 @@ let collect ~switch opts =
   | Error e -> Error e
   | exception OpamStd.Sys.Exit n -> Error (Printf.sprintf "opam failed (exit %d)" n)
 
+let collect_all ~switch ~name =
+  Switch.init ();
+  match Collect.of_switch_all ?switch ?name () with
+  | Ok g -> Ok g
+  | Error e -> Error e
+  | exception OpamStd.Sys.Exit n -> Error (Printf.sprintf "opam failed (exit %d)" n)
+
 (* --- arguments ------------------------------------------------------------ *)
 
 let package =
@@ -98,6 +105,46 @@ let map_cmd =
   Cmd.v (Cmd.info "map" ~doc:"Collect and render in one go (the default command).")
     Term.(term_result (const run $ switch $ opts $ data $ output "squarified_treemap.html"))
 
+let switch_cmd =
+  let name =
+    Arg.(value & opt (some string) None & info [ "name" ] ~docv:"NAME" ~doc:"Display name (default: the switch name).")
+  in
+  let data =
+    Arg.(value & opt (some string) None & info [ "data" ] ~docv:"FILE" ~doc:"Also write the collected JSON to $(docv).")
+  in
+  let run switch name data out =
+    handle
+      (Result.map
+         (fun g ->
+           Option.iter (fun f -> write_file f (Graph.to_string g); summary f g) data;
+           render_to out g)
+         (collect_all ~switch ~name))
+  in
+  Cmd.v (Cmd.info "switch" ~doc:"Map the whole current switch (every library + library-less packages).")
+    Term.(term_result (const run $ switch $ name $ data $ output "squarified_treemap.html"))
+
+let report_cmd =
+  let data =
+    Arg.(value & pos 0 file "data.json" & info [] ~docv:"DATA" ~doc:"JSON file written by $(b,collect).")
+  in
+  let top =
+    Arg.(value & opt int 15 & info [ "top" ] ~docv:"N" ~doc:"Entries per ranked list / digest table.")
+  in
+  let run data top out =
+    let md = Filename.check_suffix out ".md" in
+    handle
+      (Result.map
+         (fun g ->
+           let s = Report.render ~top ~md g in
+           write_file out s;
+           Printf.printf "%s: %d nodes  ->  %s\n" (g : Graph.t).project (List.length g.nodes) out)
+         (Graph.of_string (read_file data)))
+  in
+  Cmd.v
+    (Cmd.info "report"
+       ~doc:"Render a JSON file into a model-oriented report: enriched JSON, or a Markdown digest when $(b,-o) ends in .md.")
+    Term.(term_result (const run $ data $ top $ output "report.json"))
+
 let cmd =
   let doc = "dependency map and binary footprint of an installed opam package" in
   let man =
@@ -107,13 +154,13 @@ let cmd =
           $(b,opam-depmap) $(i,PACKAGE) is short for $(b,opam-depmap map) $(i,PACKAGE). \
           Installed as an opam plugin, it also runs as $(b,opam depmap)." ]
   in
-  Cmd.group (Cmd.info "opam-depmap" ~doc ~man) [ map_cmd; collect_cmd; render_cmd ]
+  Cmd.group (Cmd.info "opam-depmap" ~doc ~man) [ map_cmd; collect_cmd; render_cmd; switch_cmd; report_cmd ]
 
 (* `opam-depmap PKG ...` means `opam-depmap map PKG ...`. *)
 let argv =
   let a = Sys.argv in
   if Array.length a > 1 && a.(1) <> "" && a.(1).[0] <> '-'
-     && not (List.mem a.(1) [ "map"; "collect"; "render"; "help" ])
+     && not (List.mem a.(1) [ "map"; "collect"; "render"; "switch"; "report"; "help" ])
   then Array.concat [ [| a.(0); "map" |]; Array.sub a 1 (Array.length a - 1) ]
   else a
 

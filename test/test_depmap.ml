@@ -106,6 +106,49 @@ let test_render () =
   Alcotest.(check bool) "no Dream left" false (contains html "Dream");
   Alcotest.(check bool) "self-contained" false (contains html "<script src")
 
+(* --- Report ----------------------------------------------------------------- *)
+
+(* a -> b -> c and a -> d, so depth(c)=2 and the longest chain is a -> b -> c. *)
+let chain_graph =
+  Graph.make ~project:"demo" ~roots:[ "a" ]
+    ~nodes:
+      [ { id = "a"; kind = Own; self = 100 };
+        { id = "b"; kind = External; self = 200 };
+        { id = "c"; kind = External; self = 50 };
+        { id = "d"; kind = External; self = 10 } ]
+    ~edges:[ ("a", "b"); ("b", "c"); ("a", "d") ]
+
+let test_report_json () =
+  let s = Report.render ~md:false chain_graph in
+  (* transitive(a) = self(a) + self(b,c,d) = 100+200+50+10 *)
+  Alcotest.(check bool) "transitive" true (contains s "\"transitive\": 360");
+  Alcotest.(check bool) "depth of c" true (contains s "\"depth\": 2");
+  Alcotest.(check bool) "adjacency" true (contains s "\"fan_in\"")
+
+let test_report_md () =
+  let s = Report.render ~md:true chain_graph in
+  Alcotest.(check bool) "longest chain depth" true (contains s "Longest dependency chain (depth 2)");
+  Alcotest.(check bool) "chain path" true (contains s "a \xe2\x86\x92 b \xe2\x86\x92 c");
+  Alcotest.(check bool) "digest title" true (contains s "demo \xe2\x80\x94 dependency & footprint report")
+
+(* --- Golden (byte-for-byte; the renderers are pure functions of data.json) -- *)
+
+let read_file f = In_channel.with_open_bin f In_channel.input_all
+let graph_of f = match Graph.of_string (read_file f) with Ok g -> g | Error e -> Alcotest.fail e
+
+let test_golden_render () =
+  (* real-world: the committed Dream example (PACKAGE mode, no subtitle) *)
+  Alcotest.(check string) "dream page"
+    (read_file "../example/dream/squarified_treemap.html")
+    (Render.html (graph_of "../example/dream/data.json"));
+  (* synthetic fixture exercising the subtitle swap (switch-style header) *)
+  Alcotest.(check string) "fixture page" (read_file "golden/map.html") (Render.html (graph_of "golden/data.json"))
+
+let test_golden_report () =
+  let g = graph_of "golden/data.json" in
+  Alcotest.(check string) "report.json" (read_file "golden/report.json") (Report.render ~md:false g);
+  Alcotest.(check string) "report.md" (read_file "golden/report.md") (Report.render ~md:true g)
+
 let () =
   Alcotest.run "opam-depmap"
     [ ( "graph",
@@ -119,4 +162,10 @@ let () =
           Alcotest.test_case "kind" `Quick test_kind;
           Alcotest.test_case "entries" `Quick test_entries;
           Alcotest.test_case "errors" `Quick test_errors ] );
-      ("render", [ Alcotest.test_case "html" `Quick test_render ]) ]
+      ("render", [ Alcotest.test_case "html" `Quick test_render ]);
+      ( "report",
+        [ Alcotest.test_case "json" `Quick test_report_json;
+          Alcotest.test_case "md" `Quick test_report_md ] );
+      ( "golden",
+        [ Alcotest.test_case "render" `Quick test_golden_render;
+          Alcotest.test_case "report" `Quick test_golden_report ] ) ]

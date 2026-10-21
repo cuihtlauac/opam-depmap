@@ -1,7 +1,7 @@
 (library
  (name opam_depmap)
  (public_name opam-depmap)
- (libraries opam-state opam-format opam-core findlib unix))
+ (libraries opam-state opam-format opam-core findlib unix str))
 
 (rule
  (target template.ml)

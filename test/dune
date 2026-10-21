@@ -1,3 +1,7 @@
 (test
  (name test_depmap)
- (libraries opam-depmap alcotest))
+ (libraries opam-depmap alcotest)
+ (deps
+  (glob_files golden/*)
+  ../example/dream/data.json
+  ../example/dream/squarified_treemap.html))

@@ -84,17 +84,18 @@ let artifact_bytes dir =
     0
     (try Sys.readdir dir with Sys_error _ -> [||])
 
+(* The install dir, realpath'd, only if it is an existing directory. *)
+let real_dir l =
+  match Libs.dir l with
+  | Some d when Sys.file_exists d && Sys.is_directory d -> Some (Unix.realpath d)
+  | _ -> None
+
 let of_switch ?switch o =
   Switch.with_switch ?switch @@ fun sw ->
   if not (Switch.installed sw o.package) then
     Error (Printf.sprintf "opam package %S is not installed in switch %s" o.package (Switch.name sw))
   else begin
     Libs.init ~lib_dir:(Switch.lib_dir sw);
-    let dir l =
-      match Libs.dir l with
-      | Some d when Sys.file_exists d && Sys.is_directory d -> Some (Unix.realpath d)
-      | _ -> None
-    in
     (* A library belongs to whoever installed its META file; failing that,
        its directory. *)
     let owner l =
@@ -103,8 +104,56 @@ let of_switch ?switch o =
       | None -> Option.bind (Libs.dir l) (Switch.owner sw)
     in
     let src =
-      { libs = Libs.all (); exists = Libs.exists; requires = Libs.requires; dir;
+      { libs = Libs.all (); exists = Libs.exists; requires = Libs.requires; dir = real_dir;
         bytes = artifact_bytes; owner }
     in
     run src ~same_repo:(Switch.same_repo sw o.package) o
   end
+
+(* Header prose for whole-switch mode (swapped into the page's subtitle). *)
+let switch_subtitle name =
+  Printf.sprintf
+    "The whole <b>%s</b> switch. Rectangles are every compiled library's binary \
+     footprint, area &prop; own bytes, coloured by depth; <b>dots</b> are root \
+     libraries (nothing else in the switch requires them). Library-less packages \
+     (tools, conf-*, compilers) appear as isolated blocks sized by their binary \
+     footprint. <b>Hover</b> to trace a library's binary and everything it pulls in."
+    name
+
+let of_switch_all ?switch ?name () =
+  Switch.with_switch ?switch @@ fun sw ->
+  Libs.init ~lib_dir:(Switch.lib_dir sw);
+  let name = Option.value ~default:(Switch.name sw) name in
+  match Libs.all () with
+  | [] -> Error "no findlib libraries found in this switch"
+  | libs ->
+      let libset = S.of_list libs in
+      (* Edges: each library's requires, kept only when both ends are libraries. *)
+      let edges =
+        List.concat_map
+          (fun n -> List.filter_map (fun d -> if S.mem d libset then Some (n, d) else None) (Libs.requires n))
+          libs
+      in
+      (* Library sizes: the shared install-dir dedup (shortest name wins). *)
+      let src =
+        { libs; exists = Libs.exists; requires = Libs.requires; dir = real_dir;
+          bytes = artifact_bytes; owner = (fun _ -> None) }
+      in
+      let lib_size = sizes src libset in
+      (* Roots = libraries nothing requires; they (and only they) are the own layer. *)
+      let required = S.of_list (List.map snd edges) in
+      let roots = List.filter (fun l -> not (S.mem l required)) libs in
+      let root_set = S.of_list roots in
+      let lib_nodes =
+        List.map
+          (fun id ->
+            { Graph.id; kind = (if S.mem id root_set then Graph.Own else Graph.External); self = lib_size id })
+          libs
+      in
+      (* Library-less packages: isolated, edge-less, never own. *)
+      let libless_nodes =
+        List.map (fun (id, bytes) -> { Graph.id; kind = Graph.External; self = bytes }) (Switch.library_less sw)
+      in
+      Ok
+        { (Graph.make ~project:name ~roots ~nodes:(lib_nodes @ libless_nodes) ~edges) with
+          subtitle = Some (switch_subtitle name) }

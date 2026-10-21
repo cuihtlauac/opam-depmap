@@ -23,3 +23,9 @@ val owner : t -> string -> string option
 (** [owner t path] is the opam package that installed [path] (a file or a
     directory), according to the switch's [.changes] records. A directory not
     recorded itself belongs to its nearest recorded ancestor. *)
+
+val library_less : t -> (string * int) list
+(** Installed packages that ship no findlib library (install no [lib/.../META]),
+    each with its binary footprint: the recorded byte size of the files it
+    installs under [bin/], [sbin/], [stublibs/]. Read straight from the switch's
+    [.opam-switch/install/<pkg>.changes] manifests, sorted by package name. *)

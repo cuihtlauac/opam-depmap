@@ -6,28 +6,44 @@ OCaml as a library, plus a CLI that installs as an opam plugin (`opam depmap`).
 
 ## What this is
 
-A two-stage pipeline that turns any opam package installed in a switch into a
-self-contained HTML page:
+A pipeline that turns an opam package (or a whole switch) into a self-contained
+artifact. `data.json` is the pivot; two renderers consume it — one for humans,
+one for models:
 
 ```
-opam-state + findlib  --(Collect)-->  data.json  --(Render)-->  squarified_treemap.html
+opam-state + findlib  --(Collect)-->  data.json  --(Render)-->  squarified_treemap.html  (human)
+                                               \--(Report)-->  report.{json,md}          (model)
 ```
 
 - **`lib/`**: library `opam-depmap` (module `Opam_depmap`).
   - `Switch`: opam side, read-only through opam-state. It covers installed packages,
-    `dev-repo`, and `owner` (which package installed a path, from the switch's
-    `.changes` records). `Switch.init` must run before `with_switch`.
-  - `Libs`: findlib side (`requires` under no predicates, dirs, META paths).
-    It initialises findlib from the switch's own `findlib.conf`, so no `opam exec` is needed.
+    `dev-repo`, `owner` (which package installed a path, from the switch's
+    `.changes` records), and `library_less` (packages that ship no findlib
+    library, with their binary footprint — for whole-switch mode). `Switch.init`
+    must run before `with_switch`.
+  - `Libs`: findlib side. `requires` reads the raw META `requires` property
+    (`Findlib.package_property`, *not* `Fl_package_base.requires`, which raises
+    when a dependency is uninstalled and would drop all of a node's edges).
+    Initialises findlib from the switch's own `findlib.conf`, so no `opam exec`.
   - `Collect`: the algorithm. It is pure over a `source` record, so tests can
-    run it on a fake. `of_switch` connects it to `Switch` and `Libs`.
-  - `Graph`: the `data.json` model and a printer. The printer is byte-compatible
-    with Python's `json.dumps` (`indent=1`, or minified with `separators=(",",":")`).
-  - `Render`: substitutes the graph into the embedded template.
-- **`bin/main.ml`**: the cmdliner CLI, with subcommands `map` (the default),
-  `collect` and `render`. A bare `opam-depmap PKG` is rewritten to `map PKG`.
-- **`test/`**: alcotest unit tests. **`test/oracle/`** is the original Python
-  implementation, kept as a differential-testing oracle (`dune build @oracle`).
+    run it on a fake. `of_switch` does PACKAGE mode (one package's `requires`
+    closure); `of_switch_all` does SWITCH mode (every findlib library + every
+    library-less package, `own` = the root libraries).
+  - `Graph`: the `data.json` model and a JSON printer (`json_to_string`, also
+    reused by `Report`): a one-space indent, or no whitespace when minified. An
+    optional `subtitle` is emitted last (SWITCH mode supplies it).
+  - `Render`: substitutes the graph into the embedded template (HTML, for humans).
+  - `Report`: the model-oriented renderer. The HTML encodes magnitudes visually
+    (area, colour, position); a model can't perceive those, so `Report` persists
+    the quantities as explicit numbers — `depth`, `transitive` footprint,
+    `fan_in`/`fan_out`, the size-distribution summary. `~md` emits a compact
+    Markdown digest; otherwise an enriched JSON (every node's metrics + adjacency).
+- **`bin/main.ml`**: the cmdliner CLI, subcommands `map` (the default),
+  `collect`, `render`, `switch` (whole-switch map) and `report`. A bare
+  `opam-depmap PKG` is rewritten to `map PKG`.
+- **`test/`**: alcotest unit tests, including `test/golden/` — byte-for-byte
+  fixtures for `Render`/`Report` (switch-independent pure functions), plus the
+  committed `example/dream` page as a real-world render golden.
 
 ## Conventions (keep these)
 
@@ -41,27 +57,38 @@ opam-state + findlib  --(Collect)-->  data.json  --(Render)-->  squarified_treem
   project name. Prose therefore generalises, but JS identifiers like `DREAM`
   must stay capitalised so they are not rewritten.
 - **`data.json` shape:** `{project, roots, nodes:[{id,kind:own|external,self}], edges:[[a,b]]}`,
-  with nodes sorted and edges sorted and unique.
+  with nodes sorted and edges sorted and unique, plus an optional trailing
+  `subtitle` (SWITCH mode supplies it; `Render` swaps it into the header only
+  when present, so PACKAGE-mode output is byte-identical).
 - Sizes are a **proxy** (compiled-artifact bytes), not install size.
-- **Oracle parity.** Changes to collection or rendering must keep `dune build @oracle`
-  green. If a behaviour change is intended, record each resulting difference in
-  `test/oracle/expected_diffs` with a reason. Only `roots` and `kind` can be
-  listed there: graph and sizes must always match.
+- **Two renderers, one truth.** `Report`'s metrics (depth, transitive, fan-in,
+  the size distribution) re-implement the browser JS in `lib/template.html`
+  (`metricBase`, the `moveTip` cone, the statline). Change a metric in one, change
+  it in the other; the comments cross-reference the JS by section.
+- **Golden parity.** `Render`/`Report` are pure functions of `data.json`; their
+  output is pinned byte-for-byte by `test/golden/` and the `example/dream` page.
+  Any intended change to the HTML or report format means regenerating those
+  goldens in the same commit (`dune test` fails otherwise).
 
 ## Build / verify
 
 ```sh
 dune build && dune test          # or: make && make test
-make oracle                      # Python vs OCaml on the 16 packages in test/oracle/packages
 make example                     # regenerate example/dream (needs `opam install dream`)
-make PACKAGE=<opam package>      # -> out/*.html
+make PACKAGE=<opam package>      # -> out/*.html  (one package)
+make switch                      # -> out/*.html  (the whole current switch)
+make report  PACKAGE=<pkg>       # -> out/report.json  (model-oriented)
+make digest  PACKAGE=<pkg>       # -> out/report.md    (compact digest)
 opam pin add opam-depmap .       # install the plugin: `opam depmap <pkg>`
 ```
 
-Verify that a page renders with headless Chrome:
+Verify that a page renders with headless Chrome (the treemap is drawn as SVG
+`<path>` elements at runtime, so use `--headless=new` with a real viewport —
+legacy `--headless` does not run the draw):
 
 ```sh
-google-chrome --headless --disable-gpu --dump-dom file://$PWD/out/squarified_treemap.html | grep -c 'class="cell"'
+google-chrome --headless=new --disable-gpu --window-size=1400,900 --virtual-time-budget=4000 \
+  --dump-dom file://$PWD/out/squarified_treemap.html | grep -c '<path'
 ```
 
 ## Gotchas
@@ -82,4 +109,13 @@ google-chrome --headless --disable-gpu --dump-dom file://$PWD/out/squarified_tre
 - Sizing sums only the top level of each findlib dir, because dune installs
   sub-libraries in subdirs. When libraries share a dir, the shortest name gets
   its full size (ties go to the alphabetically first).
-- `dune build @oracle` takes about 45 s: it shells out to `opam exec` for the Python side.
+- **SWITCH mode** (`opam-depmap switch`, `Collect.of_switch_all`): nodes are
+  every findlib library (edges from `requires`) plus every library-less opam
+  package (`Switch.library_less`, sized by bytes under `bin/`, `sbin/`,
+  `stublibs/`, read from its `.changes` manifest). `own`/`roots` is **root
+  libraries only** — a library-less package has no consumers but must never be
+  classed `own` (it would wrongly become a dot). Library-less packages are
+  deliberately **edge-less** (isolated blocks): `requires` already carries only
+  runtime/link edges, so no opam dependency-kind handling is needed. A large
+  switch therefore has many root libraries → a crowded dot row; this is expected
+  (the rectangle treemap stays readable regardless).
