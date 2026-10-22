@@ -44,7 +44,7 @@ let package =
   Arg.(required & pos 0 (some string) None & info [] ~docv:"PACKAGE" ~doc:"Installed opam package to analyse.")
 
 let opts =
-  let name =
+  let name_t =
     Arg.(value & opt (some string) None & info [ "name" ] ~docv:"NAME" ~doc:"Display name (default: $(i,PACKAGE)).")
   in
   let entries =
@@ -57,7 +57,7 @@ let opts =
                  Default: the installed packages sharing $(i,PACKAGE)'s dev-repo.")
   in
   Term.(const (fun package name entries own -> Collect.options ?name ~entries ~own package)
-        $ package $ name $ entries $ own)
+        $ package $ name_t $ entries $ own)
 
 let switch =
   Arg.(value & opt (some string) None & info [ "switch" ] ~docv:"SWITCH" ~env:(Cmd.Env.info "OPAMSWITCH")
@@ -106,7 +106,7 @@ let map_cmd =
     Term.(term_result (const run $ switch $ opts $ data $ output "squarified_treemap.html"))
 
 let switch_cmd =
-  let name =
+  let name_t =
     Arg.(value & opt (some string) None & info [ "name" ] ~docv:"NAME" ~doc:"Display name (default: the switch name).")
   in
   let data =
@@ -121,7 +121,7 @@ let switch_cmd =
          (collect_all ~switch ~name))
   in
   Cmd.v (Cmd.info "switch" ~doc:"Map the whole current switch (every library + library-less packages).")
-    Term.(term_result (const run $ switch $ name $ data $ output "squarified_treemap.html"))
+    Term.(term_result (const run $ switch $ name_t $ data $ output "squarified_treemap.html"))
 
 let report_cmd =
   let data =
