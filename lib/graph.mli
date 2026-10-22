@@ -30,6 +30,11 @@ val of_string : string -> (t, string) result
 
 val string_of_kind : kind -> string
 
+val drop_own : t -> t
+(** Remove every {!Own} node and any edge touching one, then recompute [roots]
+    as the kept nodes that no kept edge requires. [project] and [subtitle] are
+    preserved; [nodes] stay sorted and [edges] sorted and unique. *)
+
 (** A minimal JSON value and emitter: one-space indent, or no whitespace when
     [minify]. [Raw] emits its string verbatim, for pre-formatted numbers.
     Shared with {!Report}. *)

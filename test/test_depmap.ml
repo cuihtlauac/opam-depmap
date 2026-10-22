@@ -91,6 +91,14 @@ let test_entries () =
   Alcotest.(check string) "name" "Demo" g.project;
   Alcotest.(check int) "nodes" 2 (List.length g.nodes)
 
+let test_no_own () =
+  let g = Graph.drop_own (run (Collect.options "pkg")) in
+  Alcotest.(check (list string)) "only external nodes remain" [ "ext"; "ext.sub" ]
+    (List.map (fun (n : Graph.node) -> n.id) g.nodes);
+  Alcotest.(check bool) "all external" true (List.for_all (fun (n : Graph.node) -> n.kind = External) g.nodes);
+  Alcotest.(check int) "edges touching an own node are dropped" 0 (List.length g.edges);
+  Alcotest.(check (list string)) "roots recomputed over what remains" [ "ext"; "ext.sub" ] g.roots
+
 let test_errors () =
   let err o = Result.is_error (Collect.run fake ~same_repo:[] o) in
   Alcotest.(check bool) "no library" true (err (Collect.options "nolib"));
@@ -161,6 +169,7 @@ let () =
           Alcotest.test_case "sizes" `Quick test_sizes;
           Alcotest.test_case "kind" `Quick test_kind;
           Alcotest.test_case "entries" `Quick test_entries;
+          Alcotest.test_case "no-own" `Quick test_no_own;
           Alcotest.test_case "errors" `Quick test_errors ] );
       ("render", [ Alcotest.test_case "html" `Quick test_render ]);
       ( "report",

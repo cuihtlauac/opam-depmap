@@ -16,6 +16,18 @@ let make ~project ~roots ~nodes ~edges =
 
 let string_of_kind = function Own -> "own" | External -> "external"
 
+(* Drop every Own node and any edge touching one, then recompute roots as the
+   kept nodes no kept edge requires (same rule as Collect.run /
+   Collect.of_switch_all). nodes stay sorted; edges stay sorted and unique. *)
+let drop_own g =
+  let module S = Set.Make (String) in
+  let nodes = List.filter (fun n -> n.kind <> Own) g.nodes in
+  let kept = S.of_list (List.map (fun n -> n.id) nodes) in
+  let edges = List.filter (fun (a, b) -> S.mem a kept && S.mem b kept) g.edges in
+  let required = S.of_list (List.map snd edges) in
+  let roots = List.filter_map (fun n -> if S.mem n.id required then None else Some n.id) nodes in
+  { g with roots; nodes; edges }
+
 (* --- printing: the canonical data.json JSON (one-space indent, or minified) - *)
 
 type json = Str of string | Int of int | Raw of string | Arr of json list | Obj of (string * json) list

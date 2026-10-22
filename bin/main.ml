@@ -66,44 +66,51 @@ let switch =
 let output default =
   Arg.(value & opt string default & info [ "o"; "output" ] ~docv:"FILE" ~doc:"Output file.")
 
+let no_own =
+  Arg.(value & flag & info [ "no-own" ]
+         ~doc:"Exclude the project's own libraries; keep only external dependencies.")
+
+let maybe_drop no_own g = if no_own then Graph.drop_own g else g
+
 let handle = function Ok () -> Ok () | Error e -> Error (`Msg e)
 
 (* --- commands ------------------------------------------------------------- *)
 
 let collect_cmd =
-  let run switch opts out =
+  let run switch opts no_own out =
     handle
       (Result.map
-         (fun g -> write_file out (Graph.to_string g); summary out g)
+         (fun g -> let g = maybe_drop no_own g in write_file out (Graph.to_string g); summary out g)
          (collect ~switch opts))
   in
   Cmd.v (Cmd.info "collect" ~doc:"Collect the dependency graph and sizes into a JSON file.")
-    Term.(term_result (const run $ switch $ opts $ output "data.json"))
+    Term.(term_result (const run $ switch $ opts $ no_own $ output "data.json"))
 
 let render_cmd =
   let data =
     Arg.(value & pos 0 file "data.json" & info [] ~docv:"DATA" ~doc:"JSON file written by $(b,collect).")
   in
-  let run data out =
-    handle (Result.map (render_to out) (Graph.of_string (read_file data)))
+  let run data no_own out =
+    handle (Result.map (fun g -> render_to out (maybe_drop no_own g)) (Graph.of_string (read_file data)))
   in
   Cmd.v (Cmd.info "render" ~doc:"Render a JSON file into a self-contained HTML page (no opam needed).")
-    Term.(term_result (const run $ data $ output "squarified_treemap.html"))
+    Term.(term_result (const run $ data $ no_own $ output "squarified_treemap.html"))
 
 let map_cmd =
   let data =
     Arg.(value & opt (some string) None & info [ "data" ] ~docv:"FILE" ~doc:"Also write the collected JSON to $(docv).")
   in
-  let run switch opts data out =
+  let run switch opts no_own data out =
     handle
       (Result.map
          (fun g ->
+           let g = maybe_drop no_own g in
            Option.iter (fun f -> write_file f (Graph.to_string g); summary f g) data;
            render_to out g)
          (collect ~switch opts))
   in
   Cmd.v (Cmd.info "map" ~doc:"Collect and render in one go (the default command).")
-    Term.(term_result (const run $ switch $ opts $ data $ output "squarified_treemap.html"))
+    Term.(term_result (const run $ switch $ opts $ no_own $ data $ output "squarified_treemap.html"))
 
 let switch_cmd =
   let name_t =
@@ -112,16 +119,17 @@ let switch_cmd =
   let data =
     Arg.(value & opt (some string) None & info [ "data" ] ~docv:"FILE" ~doc:"Also write the collected JSON to $(docv).")
   in
-  let run switch name data out =
+  let run switch name no_own data out =
     handle
       (Result.map
          (fun g ->
+           let g = maybe_drop no_own g in
            Option.iter (fun f -> write_file f (Graph.to_string g); summary f g) data;
            render_to out g)
          (collect_all ~switch ~name))
   in
   Cmd.v (Cmd.info "switch" ~doc:"Map the whole current switch (every library + library-less packages).")
-    Term.(term_result (const run $ switch $ name_t $ data $ output "squarified_treemap.html"))
+    Term.(term_result (const run $ switch $ name_t $ no_own $ data $ output "squarified_treemap.html"))
 
 let report_cmd =
   let data =
@@ -130,11 +138,12 @@ let report_cmd =
   let top =
     Arg.(value & opt int 15 & info [ "top" ] ~docv:"N" ~doc:"Entries per ranked list / digest table.")
   in
-  let run data top out =
+  let run data top no_own out =
     let md = Filename.check_suffix out ".md" in
     handle
       (Result.map
          (fun g ->
+           let g = maybe_drop no_own g in
            let s = Report.render ~top ~md g in
            write_file out s;
            Printf.printf "%s: %d nodes  ->  %s\n" (g : Graph.t).project (List.length g.nodes) out)
@@ -143,7 +152,7 @@ let report_cmd =
   Cmd.v
     (Cmd.info "report"
        ~doc:"Render a JSON file into a model-oriented report: enriched JSON, or a Markdown digest when $(b,-o) ends in .md.")
-    Term.(term_result (const run $ data $ top $ output "report.json"))
+    Term.(term_result (const run $ data $ top $ no_own $ output "report.json"))
 
 let cmd =
   let doc = "dependency map and binary footprint of an installed opam package" in
